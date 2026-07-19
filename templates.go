@@ -68,7 +68,7 @@ const templatesSrc = `
 {{define "success"}}{{template "head" .}}
 <p>Zapisano! Twój numer uczestnika:</p>
 <div class="big">#{{.Number}}</div>
-<p>Do zobaczenia na D-Day, <b>{{.Nick}}</b>. Zapiszemy się z Tobą przez czat Matrix, jeśli będzie taka potrzeba.</p>
+<p>Do zobaczenia na D-Day, <b>{{.Nick}}</b>. Zapraszamy na wydarzenie — w razie potrzeby skontaktujemy się z Tobą przez czat Matrix.</p>
 {{template "foot" .}}{{end}}
 
 {{define "duplicate"}}{{template "head" .}}
