@@ -2,14 +2,24 @@
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
+# BuildKit cache mounts keep the Go build cache and module cache across builds,
+# so the huge modernc.org/sqlite package is compiled once (~30s) instead of on
+# every image build. `make up` / compose use BuildKit, so this just works.
+ENV GOCACHE=/root/.cache/go-build GOMODCACHE=/go/pkg/mod
 # Cache modules first.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /dday .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /dday .
 # Also build the Matrix bot — a separate long-lived process. Both binaries ship
 # in the final image; compose picks which one runs per service via entrypoint.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /bot ./cmd/bot
+# It reuses the same cached build artifacts (modernc already compiled above).
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /bot ./cmd/bot
 # Stage the DB directory here so it can be copied with nonroot ownership below;
 # the distroless image has no shell to mkdir/chown at build time.
 RUN mkdir -p /data
