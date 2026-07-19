@@ -28,13 +28,31 @@ func newMockMatrix(t *testing.T, created, sent chan map[string]any) *httptest.Se
 		created <- readJSON(t, r)
 		writeJSON(w, map[string]any{"room_id": "!dm:mock"})
 	})
-	mux.HandleFunc("/_matrix/client/v3/rooms/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/send/") {
-			sent <- readJSON(t, r)
-			writeJSON(w, map[string]any{"event_id": "$sent"})
+	// m.direct account data: none exists yet (GET 404 so lookups find nothing),
+	// writes accepted (PUT 200) so createRoom counts stay unchanged.
+	mux.HandleFunc("/_matrix/client/v3/user/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Error(w, `{"errcode":"M_NOT_FOUND"}`, http.StatusNotFound)
 			return
 		}
 		writeJSON(w, map[string]any{})
+	})
+	mux.HandleFunc("/_matrix/client/v3/rooms/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/send/"):
+			sent <- readJSON(t, r)
+			writeJSON(w, map[string]any{"event_id": "$sent"})
+		case strings.Contains(r.URL.Path, "/joined_members"):
+			// Report a non-DM membership so the default flow (create DM + nudge)
+			// stands; the origin room is never mistaken for a 1:1 with the user.
+			writeJSON(w, map[string]any{"joined": map[string]any{
+				"@ddaybot:mock": map[string]any{},
+				"@someone:mock": map[string]any{},
+				"@other:mock":   map[string]any{},
+			}})
+		default:
+			writeJSON(w, map[string]any{})
+		}
 	})
 	return httptest.NewServer(mux)
 }
