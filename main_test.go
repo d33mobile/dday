@@ -551,6 +551,109 @@ func TestApiRegistered(t *testing.T) {
 	}
 }
 
+// TestStaticDirDoesNotLeak simulates STATIC_DIR=. (repo root): the root handler
+// must serve ONLY index.html for "/", and never expose secrets like matrix.env
+// or the age key via an arbitrary path (http.FileServer would have leaked them).
+func TestStaticDirDoesNotLeak(t *testing.T) {
+	h := newMux(deps{
+		seatLimit: 20,
+		isOpen:    func() bool { return true },
+		files:     http.Dir("."), // test cwd is the repo root
+	})
+	do := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	for _, p := range []string{"/matrix.env", "/config/dday_ed25519", "/server.go", "/dday.db", "/.env"} {
+		if rec := do(p); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d; want 404 (hidden path must not leak)", p, rec.Code)
+		}
+	}
+	rec := do("/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d; want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "D-Day") {
+		t.Errorf("GET / missing landing content")
+	}
+}
+
+// TestReadEndpointsGETOnly verifies the read endpoints answer 405 (Allow: GET)
+// to non-GET methods, and that /api/count is marked no-store.
+func TestReadEndpointsGETOnly(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	for _, path := range []string{"/api/count", "/api/registered", "/privacy"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		rec := httptest.NewRecorder()
+		e.handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s = %d; want 405", path, rec.Code)
+		}
+		if allow := rec.Header().Get("Allow"); allow != "GET" {
+			t.Errorf("POST %s Allow = %q; want GET", path, allow)
+		}
+	}
+	if cc := e.get(t, "/api/count").Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("/api/count Cache-Control = %q; want no-store", cc)
+	}
+}
+
+// TestRegisterFieldTooLong verifies server-side length bounds: an oversized city
+// or e-mail re-renders the form with an error and stores nothing.
+func TestRegisterFieldTooLong(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	long := strings.Repeat("a", 500)
+
+	rec := e.post(t, url.Values{"t": {e.token(t, "@alice:hs.org")}, "city": {long}, "email": {"a@example.com"}})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name="email"`) {
+		t.Errorf("too-long city: code=%d, expected form re-render", rec.Code)
+	}
+
+	rec = e.post(t, url.Values{"t": {e.token(t, "@bob:hs.org")}, "city": {"Łódź"}, "email": {long + "@example.com"}})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name="email"`) {
+		t.Errorf("too-long email: code=%d, expected form re-render", rec.Code)
+	}
+
+	if n, _ := e.store.Count(); n != 0 {
+		t.Fatalf("count = %d; want 0 after oversized submissions", n)
+	}
+}
+
+// TestRegisterEmailNormalized verifies the stored e-mail is the bare address,
+// not the raw "Name <addr>" form the parser accepts.
+func TestRegisterEmailNormalized(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	tok := e.token(t, "@alice:hs.org")
+
+	rec := e.post(t, url.Values{"t": {tok}, "city": {"Łódź"}, "email": {"Jan <jan@x.pl>"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+	got, err := e.store.Email("@alice:hs.org")
+	if err != nil {
+		t.Fatalf("store email: %v", err)
+	}
+	if got != "jan@x.pl" {
+		t.Errorf("stored email = %q; want jan@x.pl", got)
+	}
+}
+
+// TestRegisterEmptyCity verifies city stays required: a blank city re-renders
+// the form with an error and stores nothing.
+func TestRegisterEmptyCity(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	tok := e.token(t, "@alice:hs.org")
+
+	rec := e.post(t, url.Values{"t": {tok}, "city": {"   "}, "email": {"a@example.com"}})
+	if !strings.Contains(rec.Body.String(), "Podaj miejscowość") {
+		t.Errorf("empty city missing error: %s", rec.Body.String())
+	}
+	if n, _ := e.store.Count(); n != 0 {
+		t.Fatalf("count = %d; want 0 after empty city", n)
+	}
+}
+
 func TestPrivacyPage(t *testing.T) {
 	e := newTestEnv(t, true, 20)
 	rec := e.get(t, "/privacy")

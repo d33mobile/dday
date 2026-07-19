@@ -91,6 +91,15 @@ func (s *Store) Number(handle string) (int, bool, error) {
 	}
 }
 
+// Email returns the stored e-mail address for handle. It is used to verify
+// that the web layer persists the normalized address rather than the raw form
+// submission. A missing handle yields sql.ErrNoRows.
+func (s *Store) Email(handle string) (string, error) {
+	var email string
+	err := s.db.QueryRow("SELECT email FROM registrations WHERE matrix_handle = ?", handle).Scan(&email)
+	return email, err
+}
+
 // Register atomically records a new participant. It returns the assigned
 // participant number (the row id). If the handle is already present it returns
 // the existing number together with ErrDuplicate. If the seat limit is reached

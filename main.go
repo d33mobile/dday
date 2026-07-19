@@ -8,15 +8,19 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/d33mobile/dday/internal/matrixbot"
@@ -90,9 +94,26 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("dday listening on :%s", port)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Graceful shutdown: on SIGINT/SIGTERM (container redeploy) stop accepting
+	// new requests, drain in-flight ones, then return so the deferred st.Close()
+	// runs and the SQLite WAL is checkpointed cleanly.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("dday listening on :%s", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	stop() // restore default signal handling; a second signal now aborts hard
+	log.Printf("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
 	}
 }
 

@@ -31,6 +31,13 @@ const tokenTTL = 48 * time.Hour
 // Issued time is ahead of the server's clock.
 const tokenFutureSkew = 5 * time.Minute
 
+// Server-side input bounds. A submission exceeding either is re-rendered with an
+// error instead of being stored — a cheap guard against oversized bot payloads.
+const (
+	maxCityLen  = 120 // bytes, after TrimSpace
+	maxEmailLen = 254 // bytes, the practical SMTP address maximum
+)
+
 // deps carries the runtime dependencies of the registration handlers, so the
 // mux can be built in tests with an in-memory store, an ephemeral key and an
 // injectable time gate.
@@ -79,9 +86,48 @@ func newMux(d deps) http.Handler {
 	mux.HandleFunc("/api/count", d.handleCount)
 	mux.HandleFunc("/api/registered", d.handleRegistered)
 	mux.HandleFunc("/privacy", d.handlePrivacy)
-	mux.Handle("/", http.FileServer(d.files))
+	mux.HandleFunc("/", d.handleRoot)
 
 	return secure(mux)
+}
+
+// handleRoot serves the landing page for "/" only. Unlike http.FileServer it
+// never walks the static directory, so STATIC_DIR=. (a dev convenience that
+// points at the repo root) can never leak matrix.env, the age key or the SQLite
+// DB via an arbitrary path — anything other than "/" is a 404.
+func (d deps) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	d.serveStatic(w, "index.html")
+}
+
+// serveStatic writes one of the fixed, known HTML files from d.files. Only the
+// names the handlers reference can be served — there is no path input, so a
+// STATIC_DIR pointing at a directory with secrets cannot expose them.
+func (d deps) serveStatic(w http.ResponseWriter, name string) {
+	f, err := d.files.Open(name)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("serve %s: %v", name, err)
+	}
+}
+
+// methodNotAllowed writes a 405 with an Allow: GET header, for the GET-only
+// read endpoints.
+func methodNotAllowed(w http.ResponseWriter) {
+	w.Header().Set("Allow", "GET")
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
 // ready reports whether registration can run (key loaded and DB open). When it
@@ -181,16 +227,28 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate user input before touching the store; re-render the form on error.
-	if city == "" {
+	reject := func(msg string) {
 		d.renderForm(w, formView{Nick: nick, Token: token, City: city, Email: email,
-			Count: count, Limit: d.seatLimit, Error: "Podaj miejscowość."})
+			Count: count, Limit: d.seatLimit, Error: msg})
+	}
+	switch {
+	case city == "":
+		reject("Podaj miejscowość.")
+		return
+	case len(city) > maxCityLen:
+		reject("Miejscowość jest za długa.")
+		return
+	case len(email) > maxEmailLen:
+		reject("Adres e-mail jest za długi.")
 		return
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		d.renderForm(w, formView{Nick: nick, Token: token, City: city, Email: email,
-			Count: count, Limit: d.seatLimit, Error: "Podaj poprawny adres e-mail."})
+	addr, err := mail.ParseAddress(email)
+	if err != nil {
+		reject("Podaj poprawny adres e-mail.")
 		return
 	}
+	// Store the bare address, not the raw "Name <addr>" form the parser accepts.
+	email = addr.Address
 
 	number, err := d.store.Register(handle, nick, city, email, d.seatLimit)
 	switch {
@@ -207,7 +265,11 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d deps) handleCount(w http.ResponseWriter, _ *http.Request) {
+func (d deps) handleCount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
 	count := 0
 	if d.store != nil {
 		var err error
@@ -218,6 +280,7 @@ func (d deps) handleCount(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"count": count,
 		"limit": d.seatLimit,
@@ -231,6 +294,10 @@ func (d deps) handleCount(w http.ResponseWriter, _ *http.Request) {
 // missing or wrong token is 401; a missing handle is 400. On success it returns
 // {"registered": bool, "number": int}.
 func (d deps) handleRegistered(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
 	if d.internalToken == "" {
 		http.NotFound(w, r)
 		return
@@ -261,17 +328,12 @@ func (d deps) handleRegistered(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (d deps) handlePrivacy(w http.ResponseWriter, _ *http.Request) {
-	f, err := d.files.Open("privacy.html")
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
+func (d deps) handlePrivacy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
 		return
 	}
-	defer f.Close()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("privacy: %v", err)
-	}
+	d.serveStatic(w, "privacy.html")
 }
 
 // decode validates a token; on failure it writes a 400 page and returns ok=false.

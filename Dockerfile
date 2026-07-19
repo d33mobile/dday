@@ -23,4 +23,7 @@ COPY --from=build /bot /bot
 COPY --from=build --chown=65532:65532 /data /data
 EXPOSE 3329
 USER nonroot:nonroot
+# The distroless image has no shell/wget, so probe via the binary's own
+# -healthcheck flag (it GETs /healthz on localhost and exits 0/1).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["/dday", "-healthcheck"]
 ENTRYPOINT ["/dday"]
