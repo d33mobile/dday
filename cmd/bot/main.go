@@ -74,6 +74,20 @@ func main() {
 		log.Printf("already-registered check enabled against %s", origin)
 	}
 
+	// Optional on-disk persistence of the DM room cache (handle -> room id). When
+	// DM_CACHE_PATH points at a file on a volume, the cache survives restarts, so
+	// after a redeploy the bot answers a known user in the same DM without asking
+	// the server (m.direct / createRoom). Unset keeps the cache purely in-memory.
+	c.CachePath = env("DM_CACHE_PATH", "")
+	if c.CachePath != "" {
+		n, err := c.LoadCache()
+		if err != nil {
+			log.Printf("load DM cache from %s: %v (continuing empty)", c.CachePath, err)
+		} else {
+			log.Printf("loaded %d DM cache entr(y/ies) from %s", n, c.CachePath)
+		}
+	}
+
 	if err := c.Login(user, pass); err != nil {
 		log.Fatalf("login: %v", err)
 	}

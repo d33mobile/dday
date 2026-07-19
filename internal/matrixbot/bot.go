@@ -15,6 +15,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +58,12 @@ type Client struct {
 	// handle that the bot acts on; commands inside the window are ignored. Zero
 	// uses defaultRateWindow.
 	RateWindow time.Duration
+
+	// CachePath, when non-empty, is the path to a JSON file that persists the
+	// dmRooms handle->roomID map across restarts. LoadCache reads it at startup
+	// and cacheDM rewrites it (atomically) on every change. Empty disables all
+	// disk I/O — behaviour is exactly as if the cache were purely in-memory.
+	CachePath string
 
 	// now returns the current time; overridable in tests to drive the rate
 	// limiter deterministically. nil means time.Now.
@@ -421,14 +429,90 @@ func (c *Client) existingOrNewDM(user string) (string, error) {
 	return out.RoomID, nil
 }
 
-// cacheDM records room as the DM for user in the in-memory cache.
+// cacheDM records room as the DM for user in the in-memory cache and, when a
+// CachePath is configured, persists the whole cache to disk. The persist is
+// best-effort: an I/O error is logged but never propagated, so a failing disk
+// cannot break DM handling. The write happens under c.mu so the on-disk file
+// always reflects a consistent snapshot and concurrent writers cannot lose an
+// update; the cache is tiny, so holding the lock across the write is cheap.
 func (c *Client) cacheDM(user, room string) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.dmRooms == nil {
 		c.dmRooms = make(map[string]string)
 	}
 	c.dmRooms[user] = room
-	c.mu.Unlock()
+	if c.CachePath == "" {
+		return
+	}
+	if err := writeCacheFile(c.CachePath, c.dmRooms); err != nil {
+		log.Printf("persist DM cache to %s: %v", c.CachePath, err)
+	}
+}
+
+// writeCacheFile atomically writes the handle->roomID map as JSON to path. It
+// writes to a temporary file in the same directory and renames it into place,
+// so a crash mid-write never leaves a truncated/corrupt cache. Callers hold the
+// lock guarding the map, so the snapshot is consistent.
+func writeCacheFile(path string, rooms map[string]string) error {
+	data, err := json.Marshal(rooms)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".dm_cache-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+// LoadCache populates the in-memory dmRooms map from the JSON file at CachePath.
+// A missing file is not an error (the bot simply starts with an empty cache). A
+// present-but-corrupt file is logged and treated as empty rather than fatal, so
+// a mangled cache cannot crash-loop the bot. It returns the number of entries
+// loaded. When CachePath is empty it is a no-op returning 0.
+func (c *Client) LoadCache() (int, error) {
+	if c.CachePath == "" {
+		return 0, nil
+	}
+	data, err := os.ReadFile(c.CachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var loaded map[string]string
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		log.Printf("DM cache %s is corrupt (%v); starting empty", c.CachePath, err)
+		return 0, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dmRooms == nil {
+		c.dmRooms = make(map[string]string)
+	}
+	for user, room := range loaded {
+		if user != "" && room != "" {
+			c.dmRooms[user] = room
+		}
+	}
+	return len(c.dmRooms), nil
 }
 
 // directMap is the shape of the m.direct account data: a mapping from a user's
