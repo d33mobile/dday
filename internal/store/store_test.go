@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -99,5 +100,31 @@ func TestRegisterFull(t *testing.T) {
 	}
 	if n, _ := s.Count(); n != 2 {
 		t.Fatalf("count = %d; want 2", n)
+	}
+}
+
+// TestRegisterWaitlistCapacity exercises the two-tier capacity model at the
+// store level: with a combined limit of 40, the first 40 registrations all
+// succeed with sequential numbers (1..40), the 41st is ErrFull, and Count never
+// exceeds 40. The web layer classifies numbers 1..20 as confirmed and 21..40 as
+// waiting list; here we only assert the store honors the total limit.
+func TestRegisterWaitlistCapacity(t *testing.T) {
+	s := openTest(t)
+	const total = 40
+	for i := 1; i <= total; i++ {
+		h := fmt.Sprintf("@u%d:hs", i)
+		num, err := s.Register(h, "u", "Łódź", "u@x.com", total)
+		if err != nil {
+			t.Fatalf("register #%d: %v", i, err)
+		}
+		if num != i {
+			t.Fatalf("register #%d assigned number %d; want %d", i, num, i)
+		}
+	}
+	if _, err := s.Register("@u41:hs", "u", "Łódź", "u@x.com", total); !errors.Is(err, ErrFull) {
+		t.Fatalf("41st register err = %v; want ErrFull", err)
+	}
+	if n, _ := s.Count(); n != total {
+		t.Fatalf("count = %d; want %d", n, total)
 	}
 }

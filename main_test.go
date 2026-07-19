@@ -65,8 +65,16 @@ func newTestEnv(t *testing.T, open bool, limit int) *testEnv {
 }
 
 // newTestEnvToken is newTestEnv with an explicit internal token, so tests can
-// exercise the guarded /api/registered endpoint (empty token disables it).
+// exercise the guarded /api/registered endpoint (empty token disables it). It
+// uses no waiting-list capacity, so total == seatLimit and the classic full
+// behavior applies.
 func newTestEnvToken(t *testing.T, open bool, limit int, internalToken string) *testEnv {
+	return newTestEnvSeats(t, open, limit, 0, internalToken)
+}
+
+// newTestEnvSeats builds the mux with an explicit confirmed-seat limit and
+// waiting-list limit, so tests can exercise the two-tier capacity model.
+func newTestEnvSeats(t *testing.T, open bool, seatLimit, waitlistLimit int, internalToken string) *testEnv {
 	t.Helper()
 	rcpt, id := genKeypair(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -83,7 +91,8 @@ func newTestEnvToken(t *testing.T, open bool, limit int, internalToken string) *
 	h := newMux(deps{
 		store:         st,
 		identity:      id,
-		seatLimit:     limit,
+		seatLimit:     seatLimit,
+		waitlistLimit: waitlistLimit,
 		isOpen:        func() bool { return open },
 		files:         http.FS(sub),
 		internalToken: internalToken,
@@ -217,6 +226,128 @@ func TestRegisterFull(t *testing.T) {
 	if !strings.Contains(grec.Body.String(), "Brak miejsc") {
 		t.Errorf("full GET missing 'Brak miejsc'")
 	}
+}
+
+// TestRegisterWaitlistClassification drives the two-tier capacity model through
+// the web layer: with 2 confirmed seats + 2 waiting-list places, the first two
+// signups are confirmed participants, the next two land on the waiting list
+// (positions #1 and #2), and the fifth is refused with "Brak miejsc".
+func TestRegisterWaitlistClassification(t *testing.T) {
+	e := newTestEnvSeats(t, true, 2, 2, "")
+	post := func(handle string) string {
+		tok := e.token(t, handle)
+		rec := e.post(t, url.Values{"t": {tok}, "city": {"Łódź"}, "email": {"x@example.com"}})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("post %s status = %d", handle, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Confirmed participants: numbers 1 and 2.
+	if b := post("@a:hs.org"); !strings.Contains(b, "numer uczestnika") || !strings.Contains(b, "#1") {
+		t.Errorf("first signup should be confirmed #1: %s", b)
+	}
+	if b := post("@b:hs.org"); !strings.Contains(b, "#2") {
+		t.Errorf("second signup should be confirmed #2: %s", b)
+	}
+	// Waiting list: number 3 -> position #1, number 4 -> position #2.
+	b3 := post("@c:hs.org")
+	if !strings.Contains(b3, "rezerwow") || !strings.Contains(b3, "#1") {
+		t.Errorf("third signup should be waitlist position #1: %s", b3)
+	}
+	if strings.Contains(b3, "numer uczestnika") {
+		t.Errorf("waitlist page must not use the confirmed-participant wording: %s", b3)
+	}
+	b4 := post("@d:hs.org")
+	if !strings.Contains(b4, "rezerwow") || !strings.Contains(b4, "#2") {
+		t.Errorf("fourth signup should be waitlist position #2: %s", b4)
+	}
+
+	// Fifth signup exceeds total capacity.
+	tok := e.token(t, "@e:hs.org")
+	rec := e.post(t, url.Values{"t": {tok}, "city": {"Łódź"}, "email": {"e@example.com"}})
+	if !strings.Contains(rec.Body.String(), "Brak miejsc") {
+		t.Errorf("fifth signup should be 'Brak miejsc': %s", rec.Body.String())
+	}
+	if n, _ := e.store.Count(); n != 4 {
+		t.Fatalf("count = %d; want 4 (capacity never exceeded)", n)
+	}
+}
+
+// TestRegisterGetWaitlistNote verifies the GET form: once confirmed seats are
+// gone but waiting-list places remain, the form warns the signup joins the
+// waiting list; once total capacity is reached it shows "Brak miejsc" instead.
+func TestRegisterGetWaitlistNote(t *testing.T) {
+	e := newTestEnvSeats(t, true, 2, 2, "")
+	// Fill the two confirmed seats directly.
+	for _, h := range []string{"@a:hs.org", "@b:hs.org"} {
+		if _, err := e.store.Register(h, "x", "Łódź", "x@example.com", 4); err != nil {
+			t.Fatalf("seed %s: %v", h, err)
+		}
+	}
+	// count == seatLimit (2) < total (4): form shown with waiting-list note.
+	grec := e.get(t, "/register?t="+url.QueryEscape(e.token(t, "@c:hs.org")))
+	body := grec.Body.String()
+	if !strings.Contains(body, `name="email"`) {
+		t.Errorf("form must still render when waiting-list places remain: %s", body)
+	}
+	if !strings.Contains(body, "listę rezerwową") {
+		t.Errorf("form missing waiting-list warning: %s", body)
+	}
+
+	// Fill the waiting list too -> count == total: no places at all.
+	for _, h := range []string{"@c:hs.org", "@d:hs.org"} {
+		if _, err := e.store.Register(h, "x", "Łódź", "x@example.com", 4); err != nil {
+			t.Fatalf("seed %s: %v", h, err)
+		}
+	}
+	grec = e.get(t, "/register?t="+url.QueryEscape(e.token(t, "@e:hs.org")))
+	if !strings.Contains(grec.Body.String(), "Brak miejsc") {
+		t.Errorf("full GET missing 'Brak miejsc': %s", grec.Body.String())
+	}
+}
+
+// TestApiCountWaitlistFields verifies the extended /api/count JSON exposes the
+// two-tier capacity fields correctly across the interesting boundaries.
+func TestApiCountWaitlistFields(t *testing.T) {
+	e := newTestEnvSeats(t, true, 2, 2, "") // seatLimit 2, waitlist 2, total 4
+	type countResp struct {
+		Count         int  `json:"count"`
+		Limit         int  `json:"limit"`
+		Waitlist      int  `json:"waitlist"`
+		Confirmed     int  `json:"confirmed"`
+		WaitlistCount int  `json:"waitlistCount"`
+		Full          bool `json:"full"`
+		Open          bool `json:"open"`
+	}
+	check := func(wantCount, wantConfirmed, wantWaitlist int, wantFull bool) {
+		t.Helper()
+		var got countResp
+		if err := json.Unmarshal(e.get(t, "/api/count").Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.Count != wantCount || got.Confirmed != wantConfirmed ||
+			got.WaitlistCount != wantWaitlist || got.Full != wantFull ||
+			got.Limit != 2 || got.Waitlist != 2 {
+			t.Errorf("count=%d api = %+v; want count=%d confirmed=%d waitlistCount=%d full=%v limit=2 waitlist=2",
+				wantCount, got, wantCount, wantConfirmed, wantWaitlist, wantFull)
+		}
+	}
+
+	check(0, 0, 0, false)
+	seed := func(h string) {
+		if _, err := e.store.Register(h, "x", "Łódź", "x@example.com", 4); err != nil {
+			t.Fatalf("seed %s: %v", h, err)
+		}
+	}
+	seed("@a:hs.org")
+	check(1, 1, 0, false)
+	seed("@b:hs.org")
+	check(2, 2, 0, false) // confirmed seats full, waiting list empty, not full overall
+	seed("@c:hs.org")
+	check(3, 2, 1, false)
+	seed("@d:hs.org")
+	check(4, 2, 2, true) // total capacity reached
 }
 
 func TestRegisterClosed(t *testing.T) {

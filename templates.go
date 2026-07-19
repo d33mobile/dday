@@ -51,6 +51,7 @@ const templatesSrc = `
 
 {{define "form"}}{{template "head" .}}
 {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+{{if .Waitlist}}<div class="err" style="color:#ffcf70;background:rgba(255,180,60,.08);border-color:rgba(255,180,60,.28)">Miejsca podstawowe są już zajęte. Ten zapis trafi na <b>listę rezerwową</b> — damy znać, jeśli zwolni się miejsce.</div>{{end}}
 <p>Cześć <b>{{.Nick}}</b>! Uzupełnij dane, aby dokończyć zapis na D-Day.</p>
 <form method="POST" action="/register">
 <input type="hidden" name="t" value="{{.Token}}">
@@ -71,9 +72,16 @@ const templatesSrc = `
 <p>Do zobaczenia na D-Day, <b>{{.Nick}}</b>. Zapraszamy na wydarzenie — w razie potrzeby skontaktujemy się z Tobą przez czat Matrix.</p>
 {{template "foot" .}}{{end}}
 
+{{define "waitlist"}}{{template "head" .}}
+<p>Miejsca podstawowe są już zajęte, ale zapisaliśmy Cię na <b>listę rezerwową</b>. Twoja pozycja:</p>
+<div class="big">#{{.WaitlistPos}}</div>
+<p>Damy znać przez czat Matrix, <b>{{.Nick}}</b>, jeśli zwolni się miejsce.</p>
+{{template "foot" .}}{{end}}
+
 {{define "duplicate"}}{{template "head" .}}
-<p>Jesteś już zapisany 🎉 Twój numer uczestnika:</p>
-<div class="big">#{{.Number}}</div>
+{{if .WaitlistPos}}<p>Jesteś już zapisany 🎉 na liście rezerwowej, pozycja:</p>
+<div class="big">#{{.WaitlistPos}}</div>{{else}}<p>Jesteś już zapisany 🎉 Twój numer uczestnika:</p>
+<div class="big">#{{.Number}}</div>{{end}}
 <p>Nie musisz robić nic więcej, <b>{{.Nick}}</b>.</p>
 {{template "foot" .}}{{end}}
 

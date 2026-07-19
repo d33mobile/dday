@@ -93,6 +93,8 @@
   .seats.full .bar-fill{background:linear-gradient(90deg,#f85149,#ff8a3d)}
   .seats-note{font-size:.78rem;letter-spacing:.06em;color:var(--muted)}
   .seats.full .seats-note{color:#f85149;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+  .seats-waitlist{font-size:.9rem;letter-spacing:.04em;color:var(--accent2);margin:-.35rem 0 .7rem;font-weight:700}
+  .seats-waitlist b{color:var(--accent2);font-variant-numeric:tabular-nums}
 
   /* how-to-register instructions — visible before and after registration opens */
   .howto{background:var(--card);border:1px solid var(--border);border-radius:16px;
@@ -158,7 +160,8 @@
       <div class="seats-num" id="seat-count">—</div>
       <div class="seats-of" id="seat-of"><b>—</b> / 20 miejsc</div>
       <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
-      <div class="seats-note" id="seat-note">Liczba miejsc ograniczona — 20 uczestników</div>
+      <div class="seats-waitlist" id="seat-waitlist" hidden>Lista rezerwowa: <b id="wait-count">0</b> / 20</div>
+      <div class="seats-note" id="seat-note">20 miejsc + 20 rezerwowych</div>
     </section>
 
     <section class="howto">
@@ -168,7 +171,7 @@
         <li>Bot odeśle Ci prywatny link do formularza (miejscowość + e-mail).</li>
         <li>Wypełnij formularz — dostaniesz swój numer uczestnika.</li>
       </ol>
-      <p class="limit">Liczba miejsc ograniczona do 20. Zapisy startują w niedzielę 26 lipca, 15:00 czasu PL.</p>
+      <p class="limit">20 miejsc podstawowych + 20 na liście rezerwowej. Zapisy startują w niedzielę 26 lipca, 15:00 czasu PL.</p>
     </section>
 
     <section class="meta">
@@ -227,7 +230,9 @@
         numEl=document.getElementById('seat-count'),
         ofEl=document.getElementById('seat-of'),
         fill=document.getElementById('bar-fill'),
-        note=document.getElementById('seat-note');
+        note=document.getElementById('seat-note'),
+        waitEl=document.getElementById('seat-waitlist'),
+        waitNum=document.getElementById('wait-count');
 
     function animateTo(target){
       var dur=900,t0=null;
@@ -243,24 +248,43 @@
     fetch('/api/count',{headers:{'Accept':'application/json'}})
       .then(function(r){if(!r.ok)throw 0;return r.json();})
       .then(function(j){
-        var c=j.count|0, lim=(j.limit|0)||20;
-        ofEl.innerHTML='<b>'+c+'</b> / '+lim+' miejsc';
-        var pct=lim?Math.max(0,Math.min(100,c/lim*100)):0;
-        if(c>=lim){
+        var c=j.count|0,
+            lim=(j.limit|0)||20,
+            wl=(j.waitlist|0)||20,
+            // Confirmed + waiting-list counts; fall back to deriving them from
+            // count when an older API without the fields answers.
+            confirmed=(j.confirmed!=null)?(j.confirmed|0):Math.min(c,lim),
+            wcount=(j.waitlistCount!=null)?(j.waitlistCount|0):Math.max(0,c-lim),
+            full=(j.full!=null)?!!j.full:(c>=lim+wl);
+        ofEl.innerHTML='<b>'+confirmed+'</b> / '+lim+' miejsc';
+        var pct=lim?Math.max(0,Math.min(100,confirmed/lim*100)):0;
+        // Waiting-list line appears only once the confirmed seats are gone.
+        if(wcount>0){
+          waitNum.textContent=wcount;
+          waitEl.innerHTML='Lista rezerwowa: <b>'+wcount+'</b> / '+wl;
+          waitEl.hidden=false;
+        }else{
+          waitEl.hidden=true;
+        }
+        if(full){
           seats.classList.add('full');
           numEl.textContent='KOMPLET';
           fill.style.width='100%';
-          note.textContent='Brak miejsc — limit '+lim+' osób wyczerpany';
+          note.textContent='Brak miejsc — '+lim+' uczestników + '+wl+' rezerwowych wyczerpane';
         }else{
-          animateTo(c);
+          seats.classList.remove('full');
+          animateTo(confirmed);
           fill.style.width=pct+'%';
-          note.textContent='Liczba miejsc ograniczona — '+lim+' uczestników';
+          note.textContent=(confirmed>=lim)
+            ? 'Miejsca podstawowe zajęte — trwają zapisy na listę rezerwową'
+            : lim+' miejsc + '+wl+' rezerwowych';
         }
       })
       .catch(function(){
         numEl.textContent='—';
         ofEl.innerHTML='<b>—</b> / 20 miejsc';
         fill.style.width='0';
+        waitEl.hidden=true;
       });
   })();
 </script>

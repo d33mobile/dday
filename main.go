@@ -33,7 +33,13 @@ import (
 //go:embed index.html privacy.html
 var embedded embed.FS
 
-const seatLimit = 20
+// Capacity model: the first seatLimit registrations (numbers 1..seatLimit) are
+// confirmed participants; the next waitlistLimit (numbers seatLimit+1..total)
+// land on the waiting list; beyond total there are no places at all.
+const (
+	seatLimit     = 20
+	waitlistLimit = 20
+)
 
 func main() {
 	port := env("PORT", "3329")
@@ -79,6 +85,7 @@ func main() {
 		store:         st,
 		identity:      identity,
 		seatLimit:     seatLimit,
+		waitlistLimit: waitlistLimit,
 		isOpen:        regwindow.Open,
 		files:         files,
 		internalToken: os.Getenv("INTERNAL_TOKEN"),

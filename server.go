@@ -44,32 +44,39 @@ const (
 type deps struct {
 	store         *store.Store
 	identity      age.Identity
-	seatLimit     int
+	seatLimit     int // confirmed participant places (numbers 1..seatLimit)
+	waitlistLimit int // waiting-list places (numbers seatLimit+1..seatLimit+waitlistLimit)
 	isOpen        func() bool
 	files         http.FileSystem // static files for GET /
 	internalToken string          // bearer token guarding /api/registered; empty disables it
 	tokenSecret   string          // shared HMAC key authenticating registration tokens
 }
 
+// total is the overall capacity: confirmed seats plus waiting-list places. A
+// registration is refused only once total is reached.
+func (d deps) total() int { return d.seatLimit + d.waitlistLimit }
+
 // formView is the data model for the registration form template.
 type formView struct {
-	Title string
-	Token string
-	Nick  string
-	City  string
-	Email string
-	Error string
-	Count int
-	Limit int
+	Title    string
+	Token    string
+	Nick     string
+	City     string
+	Email    string
+	Error    string
+	Count    int
+	Limit    int
+	Waitlist bool // true when confirmed seats are gone: this signup joins the waiting list
 }
 
-// resultView backs the success/duplicate/message pages.
+// resultView backs the success/duplicate/waitlist/message pages.
 type resultView struct {
-	Title   string
-	Nick    string
-	Number  int
-	Message string
-	Detail  string
+	Title       string
+	Nick        string
+	Number      int
+	WaitlistPos int // position on the waiting list (number-seatLimit); 0 for confirmed participants
+	Message     string
+	Detail      string
 }
 
 // newMux builds the HTTP handler with every route, wrapped in the security
@@ -187,14 +194,17 @@ func (d deps) registerGet(w http.ResponseWriter, r *http.Request) {
 		d.serverError(w, "count", err)
 		return
 	}
-	if count >= d.seatLimit {
+	if count >= d.total() {
 		d.renderMessage(w, http.StatusOK, "Brak miejsc",
 			"Niestety, brak wolnych miejsc.",
-			"Limit uczestników został wyczerpany.")
+			"Lista uczestników i lista rezerwowa zostały wyczerpane.")
 		return
 	}
 
-	d.renderForm(w, formView{Nick: nick, Token: token, Count: count, Limit: d.seatLimit})
+	// Confirmed seats gone but waiting-list places remain: warn that this signup
+	// joins the waiting list, not the confirmed roster.
+	d.renderForm(w, formView{Nick: nick, Token: token, Count: count,
+		Limit: d.total(), Waitlist: count >= d.seatLimit})
 }
 
 func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +239,7 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	// Validate user input before touching the store; re-render the form on error.
 	reject := func(msg string) {
 		d.renderForm(w, formView{Nick: nick, Token: token, City: city, Email: email,
-			Count: count, Limit: d.seatLimit, Error: msg})
+			Count: count, Limit: d.total(), Waitlist: count >= d.seatLimit, Error: msg})
 	}
 	switch {
 	case city == "":
@@ -250,16 +260,26 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	// Store the bare address, not the raw "Name <addr>" form the parser accepts.
 	email = addr.Address
 
-	number, err := d.store.Register(handle, nick, city, email, d.seatLimit)
+	number, err := d.store.Register(handle, nick, city, email, d.total())
 	switch {
 	case errors.Is(err, store.ErrDuplicate):
-		d.renderResult(w, "duplicate", resultView{Title: "Już zapisany", Nick: nick, Number: number})
+		// Neutral wording — an existing registration may be confirmed or on the
+		// waiting list; either way the link is spent.
+		v := resultView{Title: "Już zapisany", Nick: nick, Number: number}
+		if number > d.seatLimit {
+			v.WaitlistPos = number - d.seatLimit
+		}
+		d.renderResult(w, "duplicate", v)
 	case errors.Is(err, store.ErrFull):
 		d.renderMessage(w, http.StatusOK, "Brak miejsc",
 			"Niestety, brak wolnych miejsc.",
-			"Limit uczestników został wyczerpany.")
+			"Lista uczestników i lista rezerwowa zostały wyczerpane.")
 	case err != nil:
 		d.serverError(w, "register", err)
+	case number > d.seatLimit:
+		// Confirmed seats were full: this registration landed on the waiting list.
+		d.renderResult(w, "waitlist", resultView{Title: "Lista rezerwowa", Nick: nick,
+			Number: number, WaitlistPos: number - d.seatLimit})
 	default:
 		d.renderResult(w, "success", resultView{Title: "Zapisano", Nick: nick, Number: number})
 	}
@@ -279,12 +299,26 @@ func (d deps) handleCount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	confirmed := count
+	if confirmed > d.seatLimit {
+		confirmed = d.seatLimit
+	}
+	waitlistCount := count - d.seatLimit
+	if waitlistCount < 0 {
+		waitlistCount = 0
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	// count/limit are kept for backward compatibility; confirmed/waitlist*
+	// expose the two-tier capacity so the landing page can render both bars.
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"count": count,
-		"limit": d.seatLimit,
-		"open":  d.isOpen(),
+		"count":         count,
+		"limit":         d.seatLimit,
+		"waitlist":      d.waitlistLimit,
+		"confirmed":     confirmed,
+		"waitlistCount": waitlistCount,
+		"full":          count >= d.total(),
+		"open":          d.isOpen(),
 	})
 }
 
