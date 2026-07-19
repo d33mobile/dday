@@ -2,42 +2,44 @@ package matrixbot
 
 import (
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestTokenRoundTrip(t *testing.T) {
+func TestRegTokenRoundTrip(t *testing.T) {
 	r, id := genKeypair(t)
 
-	now := strconv.FormatInt(time.Now().Unix(), 10)
-	token, err := EncryptToken(r, now)
+	want := RegPayload{Handle: "@alice:mock", Issued: time.Now().Unix()}
+	token, err := EncodeRegToken(r, want)
 	if err != nil {
-		t.Fatalf("encrypt: %v", err)
+		t.Fatalf("encode: %v", err)
 	}
 	if token == "" {
 		t.Fatal("empty token")
 	}
 
-	got, err := DecryptToken(id, token)
+	got, err := DecodeRegToken(id, token)
 	if err != nil {
-		t.Fatalf("decrypt: %v", err)
+		t.Fatalf("decode: %v", err)
 	}
-	if got != now {
-		t.Fatalf("round-trip mismatch: got %q want %q", got, now)
+	if got.Handle != want.Handle {
+		t.Fatalf("handle mismatch: got %q want %q", got.Handle, want.Handle)
+	}
+	if got.Issued != want.Issued {
+		t.Fatalf("issued mismatch: got %d want %d", got.Issued, want.Issued)
 	}
 }
 
-func TestDecryptWrongKeyFails(t *testing.T) {
+func TestDecodeWrongKeyFails(t *testing.T) {
 	r, _ := genKeypair(t)
 	_, otherID := genKeypair(t)
 
-	token, err := EncryptToken(r, "1234567890")
+	token, err := EncodeRegToken(r, RegPayload{Handle: "@bob:mock", Issued: 1234567890})
 	if err != nil {
-		t.Fatalf("encrypt: %v", err)
+		t.Fatalf("encode: %v", err)
 	}
-	if _, err := DecryptToken(otherID, token); err == nil {
+	if _, err := DecodeRegToken(otherID, token); err == nil {
 		t.Fatal("expected decryption with the wrong key to fail")
 	}
 }

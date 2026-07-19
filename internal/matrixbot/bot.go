@@ -160,7 +160,7 @@ func isRegisterCmd(body string) bool {
 // HandleRegister opens a DM with user and sends them a fresh registration
 // link. It returns the created room id.
 func (c *Client) HandleRegister(user string) (string, error) {
-	link, err := c.registerLink()
+	link, err := c.registerLink(user)
 	if err != nil {
 		return "", fmt.Errorf("build link: %w", err)
 	}

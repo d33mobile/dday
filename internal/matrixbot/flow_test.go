@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +17,8 @@ import (
 //
 //	login -> sync -> see !register from a user -> create a direct (DM) room
 //	inviting that user -> send a message containing a registration link whose
-//	token decrypts (with the private key) back to a fresh unix timestamp.
+//	token decrypts (with the private key) back to the sender's handle plus a
+//	fresh unix timestamp.
 func TestRegisterFlowEndToEnd(t *testing.T) {
 	recipient, identity := genKeypair(t)
 
@@ -131,16 +131,15 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 		t.Fatalf("no token in link %q", link)
 	}
 
-	plaintext, err := DecryptToken(identity, token)
+	payload, err := DecodeRegToken(identity, token)
 	if err != nil {
-		t.Fatalf("decrypt token: %v", err)
+		t.Fatalf("decode token: %v", err)
 	}
-	ts, err := strconv.ParseInt(plaintext, 10, 64)
-	if err != nil {
-		t.Fatalf("token payload %q is not a unix timestamp: %v", plaintext, err)
+	if payload.Handle != userMXID {
+		t.Fatalf("token handle = %q, want %q", payload.Handle, userMXID)
 	}
-	if delta := time.Now().Unix() - ts; delta < 0 || delta > 300 {
-		t.Fatalf("token timestamp %d not fresh (delta %ds)", ts, delta)
+	if delta := time.Now().Unix() - payload.Issued; delta < 0 || delta > 300 {
+		t.Fatalf("token issued %d not fresh (delta %ds)", payload.Issued, delta)
 	}
 }
 

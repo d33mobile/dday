@@ -3,10 +3,10 @@ package matrixbot
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,13 +14,21 @@ import (
 	"filippo.io/age/agessh"
 )
 
-// The registration token replicates this shell pipeline:
+// The registration token carries a JSON RegPayload{handle, issued}, age-encrypted
+// to the SSH ed25519 recipient, then standard-base64 encoded. Only the holder of
+// the private key can decrypt it, so the link is unforgeable and carries both the
+// sender's Matrix handle (used to predefine the nick) and a verifiable issue time.
 //
-//	date +%s | age -e -i ~/.ssh/id_ed25519 -o - | base64 -w 0
+// Conceptually:
 //
-// i.e. the current unix timestamp, age-encrypted to the SSH ed25519 recipient,
-// then standard-base64 encoded. Only the holder of the private key can decrypt
-// it, so the link is unforgeable and carries a verifiable issue time.
+//	echo '{"h":"@user:hs","t":1234567890}' | age -e -i key | base64 -w 0
+
+// RegPayload is the decrypted content of a registration token: the Matrix handle
+// of the sender and the unix time the token was issued.
+type RegPayload struct {
+	Handle string `json:"h"`
+	Issued int64  `json:"t"`
+}
 
 // LoadRecipient reads an SSH ed25519 public key file (authorized_keys line) and
 // returns it as an age recipient for encryption.
@@ -83,6 +91,28 @@ func DecryptToken(id age.Identity, token string) (string, error) {
 	return string(data), nil
 }
 
+// EncodeRegToken marshals p to JSON and produces an age-encrypted, base64 token.
+func EncodeRegToken(r age.Recipient, p RegPayload) (string, error) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return EncryptToken(r, string(b))
+}
+
+// DecodeRegToken reverses EncodeRegToken using the private identity.
+func DecodeRegToken(id age.Identity, token string) (RegPayload, error) {
+	plain, err := DecryptToken(id, token)
+	if err != nil {
+		return RegPayload{}, err
+	}
+	var p RegPayload
+	if err := json.Unmarshal([]byte(plain), &p); err != nil {
+		return RegPayload{}, fmt.Errorf("unmarshal payload: %w", err)
+	}
+	return p, nil
+}
+
 // RegisterLink appends the token to the base URL as a `t` query parameter.
 func RegisterLink(base, token string) string {
 	sep := "?"
@@ -93,13 +123,13 @@ func RegisterLink(base, token string) string {
 	return base + sep + "t=" + queryEscape(token)
 }
 
-// registerLink builds a link for "now" using the client's recipient/base.
-func (c *Client) registerLink() (string, error) {
+// registerLink builds a link for "now" using the client's recipient/base,
+// embedding the sender's Matrix handle so the web server can predefine the nick.
+func (c *Client) registerLink(handle string) (string, error) {
 	if c.Recipient == nil {
 		return "", fmt.Errorf("no age recipient configured")
 	}
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	tok, err := EncryptToken(c.Recipient, ts)
+	tok, err := EncodeRegToken(c.Recipient, RegPayload{Handle: handle, Issued: time.Now().Unix()})
 	if err != nil {
 		return "", err
 	}
