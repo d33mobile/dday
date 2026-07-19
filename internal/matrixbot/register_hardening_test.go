@@ -10,8 +10,9 @@ import (
 )
 
 // TestHandleRegisterAlreadyRegistered asserts that when CheckRegistered reports
-// the handle is already registered, the bot DMs a "re-registration impossible"
-// notice and does NOT hand out a new link (no "?t=").
+// the handle is already registered, the bot replies publicly in the origin room
+// with a "re-registration impossible" notice — it does NOT open a DM, does NOT
+// hand out a new link (no "?t="), and does NOT leak the participant number.
 func TestHandleRegisterAlreadyRegistered(t *testing.T) {
 	recipient, _ := genKeypair(t)
 
@@ -29,9 +30,19 @@ func TestHandleRegisterAlreadyRegistered(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 
-	// Empty origin room: no public nudge, only the DM.
-	if _, err := c.HandleRegister("", "@alice:mock"); err != nil {
+	room, err := c.HandleRegister("!chan:mock", "@alice:mock")
+	if err != nil {
 		t.Fatalf("HandleRegister: %v", err)
+	}
+	if room != "" {
+		t.Errorf("HandleRegister returned room %q, want \"\" (no DM opened)", room)
+	}
+
+	// No DM must have been created.
+	select {
+	case <-created:
+		t.Fatal("already-registered must NOT create a DM room")
+	default:
 	}
 
 	sendBody := <-sent
@@ -42,14 +53,17 @@ func TestHandleRegisterAlreadyRegistered(t *testing.T) {
 	if !strings.Contains(body, "nie jest możliwa") {
 		t.Errorf("body = %q; want 'nie jest możliwa'", body)
 	}
-	if !strings.Contains(body, "#7") {
-		t.Errorf("body = %q; want the participant number #7", body)
+	if strings.Contains(body, "#7") {
+		t.Errorf("body = %q; must NOT reveal the participant number in public", body)
 	}
 	if strings.Contains(body, "?t=") {
 		t.Errorf("body = %q; must NOT contain a registration link", body)
 	}
 	if f, _ := sendBody["formatted_body"].(string); strings.Contains(f, "?t=") {
 		t.Errorf("formatted_body = %q; must NOT contain a registration link", f)
+	}
+	if f, _ := sendBody["formatted_body"].(string); !strings.Contains(f, "matrix.to/#/@alice:mock") {
+		t.Errorf("formatted_body = %q; want a matrix.to mention of the user", f)
 	}
 }
 

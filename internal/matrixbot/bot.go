@@ -258,15 +258,20 @@ func isRegisterCmd(body string) bool {
 }
 
 // HandleRegister reacts to a "!register" that arrived in originRoom from user.
-// It replies privately: if originRoom is itself the 1:1 DM with user it answers
-// there, otherwise it reuses (cache / m.direct) or opens a DM. Unless the reply
-// lands in originRoom, it also posts a short public nudge back in originRoom
-// pointing the user at their DMs.
 //
-// The DM content depends on state: an already-registered user is told
-// re-registration is not possible (no link); when registration is closed (per
-// c.IsOpen) they get a "not open yet" notice (no link); otherwise they get a
-// fresh registration link. It returns the created DM room id.
+// A private DM is opened for one reason only: to deliver a private registration
+// link. Every other outcome is answered publicly in originRoom, @-mentioning
+// the user, without spawning a DM:
+//
+//   - already registered: a public "you are already signed up, re-registration
+//     is not possible" reply (the participant number is not revealed in public);
+//   - not open yet (per c.IsOpen): a public "sign-ups haven't started" reply
+//     carrying the start time;
+//   - open: a DM with the registration link, plus a public nudge back in
+//     originRoom pointing the user at their DMs.
+//
+// For the public branches an empty originRoom means the reply is only logged.
+// It returns the DM room id for the open branch, and "" for the public ones.
 func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	// Per-handle rate limit: drop a burst of "!register" from the same user so a
 	// single command yields a single DM. Returns an empty room id, no error.
@@ -276,38 +281,28 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	}
 
 	// Already-registered wins over everything. Fail-open: on error we log and
-	// fall through to the normal flow, since the web POST dedupes anyway.
+	// fall through to the normal flow, since the web POST dedupes anyway. The
+	// reply is public in originRoom — no DM is opened, and the participant
+	// number is deliberately omitted so it is not leaked in a channel.
 	if c.CheckRegistered != nil {
-		number, registered, err := c.CheckRegistered(user)
+		_, registered, err := c.CheckRegistered(user)
 		if err != nil {
 			log.Printf("check registered for %s: %v (proceeding)", user, err)
 		} else if registered {
-			dmRoom, _, err := c.resolveDM(originRoom, user)
-			if err != nil {
-				return "", fmt.Errorf("resolve dm: %w", err)
-			}
-			plain := fmt.Sprintf("Jesteś już zapisany (#%d). Ponowna rejestracja nie jest możliwa.", number)
-			html := fmt.Sprintf("Jesteś już zapisany (<b>#%d</b>). Ponowna rejestracja nie jest możliwa.", number)
-			if err := c.sendHTML(dmRoom, plain, html); err != nil {
-				return dmRoom, fmt.Errorf("send: %w", err)
-			}
-			c.nudge(originRoom, dmRoom, user, "napisałem Ci szczegóły na priv.")
-			return dmRoom, nil
+			name := localpart(user)
+			plain := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", name)
+			html := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", mention(user))
+			return c.replyPublic(originRoom, plain, html)
 		}
 	}
 
+	// Registration not open yet: reply publicly in originRoom with the start
+	// time — no DM is opened.
 	if c.IsOpen != nil && !c.IsOpen() {
-		dmRoom, _, err := c.resolveDM(originRoom, user)
-		if err != nil {
-			return "", fmt.Errorf("resolve dm: %w", err)
-		}
-		plain := fmt.Sprintf("Zapisy na D-Day nie są jeszcze otwarte. Start: %s. Napisz !register ponownie po tym terminie.", regwindow.OpenStartText)
-		html := fmt.Sprintf("Zapisy na <b>D-Day</b> nie są jeszcze otwarte.<br>Start: %s.<br>Napisz <code>!register</code> ponownie po tym terminie.", regwindow.OpenStartText)
-		if err := c.sendHTML(dmRoom, plain, html); err != nil {
-			return dmRoom, fmt.Errorf("send: %w", err)
-		}
-		c.nudge(originRoom, dmRoom, user, "napisałem Ci szczegóły na priv.")
-		return dmRoom, nil
+		name := localpart(user)
+		plain := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w %s. Wróć wtedy i napisz !register.", name, regwindow.OpenStartText)
+		html := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w <b>%s</b>. Wróć wtedy i napisz <code>!register</code>.", mention(user), regwindow.OpenStartText)
+		return c.replyPublic(originRoom, plain, html)
 	}
 
 	link, err := c.registerLink(user)
@@ -325,6 +320,29 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	}
 	c.nudge(originRoom, dmRoom, user, "wysłałem Ci tam link do rejestracji.")
 	return dmRoom, nil
+}
+
+// replyPublic sends a public reply into originRoom (the channel the "!register"
+// came from). When originRoom is unknown ("") it only logs — nothing is sent
+// and no DM is ever opened — so a command from an unknown context is a no-op
+// rather than spawning a private chat. It always returns ("", nil): the caller
+// exposes "no DM room was created".
+func (c *Client) replyPublic(originRoom, plain, html string) (string, error) {
+	if originRoom == "" {
+		log.Printf("replyPublic: no origin room, dropping message: %s", plain)
+		return "", nil
+	}
+	if err := c.sendHTML(originRoom, plain, html); err != nil {
+		return "", fmt.Errorf("send: %w", err)
+	}
+	return "", nil
+}
+
+// mention renders an @-mention of user as a matrix.to HTML anchor whose text is
+// the localpart, matching the ping pattern used by nudge so the user is
+// notified.
+func mention(user string) string {
+	return fmt.Sprintf("<a href=%q>%s</a>", "https://matrix.to/#/"+user, localpart(user))
 }
 
 // nudge posts a short public reply in originRoom (the channel the "!register"
