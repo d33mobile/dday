@@ -300,8 +300,8 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	// time — no DM is opened.
 	if c.IsOpen != nil && !c.IsOpen() {
 		name := localpart(user)
-		plain := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w %s. Wróć wtedy i napisz !register.", name, regwindow.OpenStartText)
-		html := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w <b>%s</b>. Wróć wtedy i napisz <code>!register</code>.", mention(user), regwindow.OpenStartText)
+		plain := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w %s. Wróć wtedy i napisz !register.", name, regwindow.OpenStartText())
+		html := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w <b>%s</b>. Wróć wtedy i napisz <code>!register</code>.", mention(user), regwindow.OpenStartText())
 		return c.replyPublic(originRoom, plain, html)
 	}
 

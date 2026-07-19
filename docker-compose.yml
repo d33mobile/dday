@@ -37,9 +37,15 @@ services:
       DB_PATH: /data/dday.db
       # Registration time gate, sourced from .env (not hardcoded). `make up` writes
       # REGISTRATION_OPEN=1 there, forcing registration open NOW; set it to 0 or
-      # delete the line to fall back to the built-in time gate (opens 2026-07-26
-      # 15:00 Europe/Warsaw). Empty here means "unset" → time gate.
+      # delete the line to fall back to the built-in time gate (the moment
+      # REGISTRATION_OPEN_AT names). Empty here means "unset" → time gate.
       REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
+      # Event dates — the single source of truth for the site, the bot and the
+      # landing page (see internal/regwindow). Unset → built-in defaults.
+      # Accepted: RFC3339 or "2006-01-02 15:04" (Europe/Warsaw).
+      REGISTRATION_OPEN_AT: ${REGISTRATION_OPEN_AT:-}
+      EVENT_START_AT: ${EVENT_START_AT:-}
+      EVENT_END_AT: ${EVENT_END_AT:-}
       # Shared secret guarding GET /api/registered (the bot's "already registered?"
       # probe). `make up` writes a stable INTERNAL_TOKEN into .env so both services
       # agree. If empty, the endpoint is disabled (404) and the bot skips the check.
@@ -75,8 +81,13 @@ services:
       AGE_PUB_DATA: ${AGE_PUB_DATA:-}
       # Same time gate as the web service, sourced from .env. `make up` writes
       # REGISTRATION_OPEN=1 (open now); set 0 or delete the .env line to fall back
-      # to the built-in time gate (opens 2026-07-26 15:00 Europe/Warsaw).
+      # to the built-in time gate (the moment REGISTRATION_OPEN_AT names).
       REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
+      # Same date configuration as the web service, so the bot's "not open yet"
+      # reply states exactly the same moment.
+      REGISTRATION_OPEN_AT: ${REGISTRATION_OPEN_AT:-}
+      EVENT_START_AT: ${EVENT_START_AT:-}
+      EVENT_END_AT: ${EVENT_END_AT:-}
       # Same shared secret as the web service, so the bot can call
       # GET /api/registered before issuing a link. Empty → the bot skips the check.
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}

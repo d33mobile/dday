@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>D-Day · Unconference · Hakierspejs Łódź</title>
+<!-- The two description tags below are static (crawlers do not run our JS), so
+     they are the ONE place a date change must still be edited by hand — see
+     "Zmiana terminu wydarzenia" in README.md. -->
 <meta name="description" content="D-Day — unconference w Hakierspejsie w Łodzi. Sobota 8 sierpnia 2026, 14:00–22:00. Wstęp darmowy, zapisy obowiązkowe.">
 <meta property="og:title" content="D-Day · Unconference · Hakierspejs Łódź">
 <meta property="og:description" content="Sobota 8 sierpnia 2026, 14:00–22:00. Zielona 30 LU3, Łódź. Wstęp darmowy, zapisy obowiązkowe.">
@@ -139,12 +142,14 @@
         <h1>D-Day</h1>
         <span class="sub">Unconference · Hakierspejs Łódź</span>
       </div>
-      <span class="badge">8 sierpnia 2026</span>
+      <span class="badge" id="event-badge">8 sierpnia 2026</span>
     </header>
 
-    <!-- Registration-open date below (26 lipca 2026, 15:00) mirrors
-         internal/regwindow.OpenMoment / OpenStartText — keep them in sync;
-         the JS constant REG_OPEN further down encodes the same instant. -->
+    <!-- Every date on this page is a FALLBACK only, used when /api/count is
+         unreachable (e.g. GitHub Pages). The source of truth is
+         internal/regwindow (env REGISTRATION_OPEN_AT / EVENT_START_AT /
+         EVENT_END_AT); the script below overwrites the countdown targets and
+         these texts with the values the API returns. -->
     <section class="live">
       <p class="count-label" id="count-label">Zapisy startują za</p>
       <div class="countdown" id="countdown">
@@ -174,14 +179,14 @@
         <li>Bot odeśle Ci prywatny link do formularza (miejscowość + e-mail).</li>
         <li>Wypełnij formularz — dostaniesz swój numer uczestnika.</li>
       </ol>
-      <p class="limit">20 miejsc podstawowych + 20 na liście rezerwowej. Zapisy startują w niedzielę 26 lipca, 15:00 czasu PL.</p>
+      <p class="limit" id="howto-limit">20 miejsc podstawowych + 20 na liście rezerwowej. Zapisy startują w niedzielę 26 lipca, 15:00 czasu PL.</p>
     </section>
 
     <section class="meta">
-      <div class="cell"><div class="k">Kiedy</div><div class="v">Sob, 8 sierpnia<small>14:00 – 22:00</small></div></div>
+      <div class="cell"><div class="k">Kiedy</div><div class="v" id="when-date">Sob, 8 sierpnia<small id="when-time">14:00 – 22:00</small></div></div>
       <div class="cell"><div class="k">Gdzie</div><div class="v">Hakierspejs<small>Zielona 30 LU3, Łódź</small></div></div>
       <div class="cell"><div class="k">Wstęp</div><div class="v">Darmowy<small>zapisy obowiązkowe</small></div></div>
-      <div class="cell" id="regfrom"><div class="k">Zapisy od</div><div class="v">Nd 26 lipca<small>15:00 czasu PL</small></div></div>
+      <div class="cell" id="regfrom"><div class="k">Zapisy od</div><div class="v" id="regfrom-date">Nd 26 lipca<small id="regfrom-time">15:00 czasu PL</small></div></div>
     </section>
 
     <div class="foot">
@@ -194,8 +199,11 @@
   </main>
 
 <script>
-  // Two countdown targets. Both mirror internal/regwindow (OpenMoment) and the
-  // event date shown in the meta grid — keep them in sync when either changes.
+  // Two countdown targets — FALLBACK values only. /api/count returns openAt /
+  // eventStartAt (unix seconds) from internal/regwindow and the fetch below
+  // overwrites both, so the dates live in exactly one place (env
+  // REGISTRATION_OPEN_AT / EVENT_START_AT / EVENT_END_AT). These literals keep
+  // the page correct on static hosting (e.g. GitHub Pages) where no API exists.
   //   REG_OPEN — registration opens: niedziela 26 lipca 2026, 15:00 Europe/Warsaw
   //   EVENT    — D-Day starts:        sobota   8 sierpnia 2026, 14:00 Europe/Warsaw
   // Both moments fall in CEST (UTC+2), so the UTC instants are 2h earlier.
@@ -235,6 +243,36 @@
     h.textContent=pad(Math.floor(diff%86400/3600));
     m.textContent=pad(Math.floor(diff%3600/60));
     s.textContent=pad(diff%60);
+  }
+
+  // setLead replaces an element's leading text node (the part before a nested
+  // <small>) without touching the nested element.
+  function setLead(el,text){
+    if(!el)return;
+    if(el.firstChild&&el.firstChild.nodeType===3){el.firstChild.nodeValue=text;}
+    else{el.insertBefore(document.createTextNode(text),el.firstChild);}
+  }
+  function setText(id,text){
+    var el=document.getElementById(id);
+    if(el&&text)el.textContent=text;
+  }
+
+  // applyDates overwrites the hardcoded fallback dates with the authoritative
+  // ones from /api/count (rendered server-side by internal/regwindow, so the
+  // Polish wording is produced in exactly one place).
+  function applyDates(j,lim,wl){
+    if(j.openAt)REG_OPEN=j.openAt*1000;
+    if(j.eventStartAt)EVENT=j.eventStartAt*1000;
+    setText('event-badge',j.eventBadge);
+    if(j.eventShort)setLead(document.getElementById('when-date'),j.eventShort);
+    setText('when-time',j.eventShortTime);
+    if(j.openShort)setLead(document.getElementById('regfrom-date'),j.openShort);
+    setText('regfrom-time',j.openShortTime);
+    if(j.openHowto){
+      setText('howto-limit',lim+' miejsc podstawowych + '+wl+
+        ' na liście rezerwowej. Zapisy startują w '+j.openHowto+'.');
+    }
+    tick();
   }
 
   function tick(){
@@ -309,6 +347,8 @@
             confirmed=(j.confirmed!=null)?(j.confirmed|0):Math.min(c,lim),
             wcount=(j.waitlistCount!=null)?(j.waitlistCount|0):Math.max(0,c-lim),
             full=(j.full!=null)?!!j.full:(c>=lim+wl);
+        // Dates come from the API too — the HTML literals are only a fallback.
+        applyDates(j,lim,wl);
         ofEl.innerHTML='<b>'+confirmed+'</b> / '+lim+' miejsc';
         var pct=lim?Math.max(0,Math.min(100,confirmed/lim*100)):0;
         // Waiting-list line appears only once the confirmed seats are gone.

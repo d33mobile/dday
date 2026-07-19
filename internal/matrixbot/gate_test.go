@@ -48,8 +48,8 @@ func TestHandleRegisterClosed(t *testing.T) {
 	if !strings.Contains(body, "nie wystartowały") && !strings.Contains(body, "jeszcze") {
 		t.Errorf("message body = %q, want the 'not started yet' notice", body)
 	}
-	if !strings.Contains(body, regwindow.OpenStartText) {
-		t.Errorf("message body = %q, want the start date %q", body, regwindow.OpenStartText)
+	if !strings.Contains(body, regwindow.OpenStartText()) {
+		t.Errorf("message body = %q, want the start date %q", body, regwindow.OpenStartText())
 	}
 	if strings.Contains(body, "?t=") {
 		t.Errorf("message body = %q, must NOT contain a registration link (?t=)", body)

@@ -35,7 +35,7 @@ up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
 	 if [ -z "$$ro" ]; then ro=1; echo "defaulting REGISTRATION_OPEN=1 (registration OPEN now)"; \
 	 else echo "reusing existing REGISTRATION_OPEN=$$ro from .env"; fi; \
 	 { printf '# REGISTRATION_OPEN=1 keeps registration OPEN now; set 0 or delete this\n'; \
-	   printf '# line to fall back to the time gate (opens 2026-07-26 15:00 Europe/Warsaw).\n'; \
+	   printf '# line to fall back to the built-in time gate (REGISTRATION_OPEN_AT).\n'; \
 	   printf 'REGISTRATION_OPEN=%s\n' "$$ro"; \
 	   printf 'AGE_KEY_DATA=%s\n' "$$(base64 < config/dday_ed25519 | tr -d '\n')"; \
 	   printf 'AGE_PUB_DATA=%s\n' "$$(base64 < config/dday_ed25519.pub | tr -d '\n')"; \

@@ -19,11 +19,6 @@ import (
 	"filippo.io/age"
 )
 
-// openStart is the human-readable moment registration opens, shown on the
-// "closed"/"expired" pages. Sourced from regwindow so the web server, the bot
-// and index.html all state the same date. Matches the countdown in index.html.
-const openStart = regwindow.OpenStartText
-
 // tokenTTL bounds how long a registration link stays valid after it was issued.
 // A token older than this (or issued in the future beyond a small clock-skew
 // tolerance) is rejected in decode().
@@ -187,7 +182,7 @@ func (d deps) registerGet(w http.ResponseWriter, r *http.Request) {
 	if !d.isOpen() {
 		d.renderMessage(w, http.StatusOK, "Zapisy jeszcze nieotwarte",
 			"Zapisy na D-Day nie są jeszcze otwarte.",
-			"Start zapisów: "+openStart+". Wróć tutaj przez ten sam link.")
+			"Start zapisów: "+regwindow.OpenStartText()+". Wróć tutaj przez ten sam link.")
 		return
 	}
 
@@ -228,7 +223,7 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	if !d.isOpen() {
 		d.renderMessage(w, http.StatusOK, "Zapisy jeszcze nieotwarte",
 			"Zapisy na D-Day nie są jeszcze otwarte.",
-			"Start zapisów: "+openStart+".")
+			"Start zapisów: "+regwindow.OpenStartText()+".")
 		return
 	}
 
@@ -313,14 +308,27 @@ func (d deps) handleCount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// count/limit are kept for backward compatibility; confirmed/waitlist*
 	// expose the two-tier capacity so the landing page can render both bars.
+	// The *At / *Text fields make regwindow the single source of the dates: the
+	// landing page overwrites its hardcoded fallbacks with these on every load.
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"count":         count,
-		"limit":         d.seatLimit,
-		"waitlist":      d.waitlistLimit,
-		"confirmed":     confirmed,
-		"waitlistCount": waitlistCount,
-		"full":          count >= d.total(),
-		"open":          d.isOpen(),
+		"count":          count,
+		"limit":          d.seatLimit,
+		"waitlist":       d.waitlistLimit,
+		"confirmed":      confirmed,
+		"waitlistCount":  waitlistCount,
+		"full":           count >= d.total(),
+		"open":           d.isOpen(),
+		"openAt":         regwindow.OpenAt().Unix(),
+		"eventStartAt":   regwindow.EventStart().Unix(),
+		"eventEndAt":     regwindow.EventEnd().Unix(),
+		"openText":       regwindow.OpenStartText(),
+		"openHowto":      regwindow.OpenHowtoText(),
+		"openShort":      regwindow.OpenShort(),
+		"openShortTime":  regwindow.OpenShortTime(),
+		"eventText":      regwindow.EventText(),
+		"eventShort":     regwindow.EventShort(),
+		"eventShortTime": regwindow.EventShortTime(),
+		"eventBadge":     regwindow.EventBadge(),
 	})
 }
 

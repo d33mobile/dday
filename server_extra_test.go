@@ -1,12 +1,65 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/d33mobile/dday/internal/regwindow"
 )
+
+// TestApiCountDateFields asserts /api/count publishes the configured dates and
+// their Polish renderings, so index.html never has to hardcode them: setting
+// the regwindow env vars must change every field.
+func TestApiCountDateFields(t *testing.T) {
+	t.Setenv(regwindow.EnvOpenAt, "2026-09-06 11:00")     // a Sunday
+	t.Setenv(regwindow.EnvEventStart, "2026-10-03 09:30") // a Saturday
+	t.Setenv(regwindow.EnvEventEnd, "2026-10-03 17:45")
+
+	e := newTestEnv(t, true, 20)
+	var got struct {
+		OpenAt         int64  `json:"openAt"`
+		EventStartAt   int64  `json:"eventStartAt"`
+		EventEndAt     int64  `json:"eventEndAt"`
+		OpenText       string `json:"openText"`
+		OpenHowto      string `json:"openHowto"`
+		OpenShort      string `json:"openShort"`
+		OpenShortTime  string `json:"openShortTime"`
+		EventText      string `json:"eventText"`
+		EventShort     string `json:"eventShort"`
+		EventShortTime string `json:"eventShortTime"`
+		EventBadge     string `json:"eventBadge"`
+		Limit          int    `json:"limit"` // pre-existing field must survive
+	}
+	if err := json.Unmarshal(e.get(t, "/api/count").Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.OpenAt != regwindow.OpenAt().Unix() || got.EventStartAt != regwindow.EventStart().Unix() ||
+		got.EventEndAt != regwindow.EventEnd().Unix() {
+		t.Errorf("timestamps = %d/%d/%d; want %d/%d/%d", got.OpenAt, got.EventStartAt, got.EventEndAt,
+			regwindow.OpenAt().Unix(), regwindow.EventStart().Unix(), regwindow.EventEnd().Unix())
+	}
+	for _, c := range []struct{ name, got, want string }{
+		{"openText", got.OpenText, "niedziela 6 września 2026, 11:00 (czasu polskiego)"},
+		{"openHowto", got.OpenHowto, "niedzielę 6 września, 11:00 czasu PL"},
+		{"openShort", got.OpenShort, "Nd 6 września"},
+		{"openShortTime", got.OpenShortTime, "11:00 czasu PL"},
+		{"eventText", got.EventText, "sobota 3 października 2026, 09:30–17:45"},
+		{"eventShort", got.EventShort, "Sob, 3 października"},
+		{"eventShortTime", got.EventShortTime, "09:30 – 17:45"},
+		{"eventBadge", got.EventBadge, "3 października 2026"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q; want %q", c.name, c.got, c.want)
+		}
+	}
+	if got.Limit != 20 {
+		t.Errorf("limit = %d; want 20 (existing fields must not regress)", got.Limit)
+	}
+}
 
 // TestRegisterDuplicateOnWaitlist covers the ErrDuplicate branch for a handle
 // that sits on the waiting list: re-registering with the same token renders the
