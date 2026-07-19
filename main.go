@@ -173,20 +173,31 @@ func runHealthcheck(port string) {
 	}
 }
 
-// runDelete implements the GDPR erasure CLI: it opens the store at dbPath,
-// deletes the registration for handle, prints the outcome and exits 0 when a row
-// was removed, 1 otherwise (not found or error). The participant number is not
-// reissued afterwards, which is acceptable.
-func runDelete(dbPath, handle string) {
+// deleteHandle opens the store at dbPath and removes the registration for
+// handle, reporting whether a row was actually deleted. It carries no os.Exit /
+// logging so it stays unit-testable; runDelete wraps it with the CLI's exit
+// codes and log lines.
+func deleteHandle(dbPath, handle string) (deleted bool, err error) {
 	st, err := store.Open(dbPath)
 	if err != nil {
-		log.Printf("delete: open store %s: %v", dbPath, err)
-		os.Exit(1)
+		return false, fmt.Errorf("open store %s: %w", dbPath, err)
 	}
-	deleted, err := st.Delete(handle)
+	deleted, err = st.Delete(handle)
 	_ = st.Close()
 	if err != nil {
-		log.Printf("delete %s: %v", handle, err)
+		return false, fmt.Errorf("delete %s: %w", handle, err)
+	}
+	return deleted, nil
+}
+
+// runDelete implements the GDPR erasure CLI: it deletes the registration for
+// handle from dbPath, prints the outcome and exits 0 when a row was removed, 1
+// otherwise (not found or error). The participant number is not reissued
+// afterwards, which is acceptable.
+func runDelete(dbPath, handle string) {
+	deleted, err := deleteHandle(dbPath, handle)
+	if err != nil {
+		log.Printf("delete: %v", err)
 		os.Exit(1)
 	}
 	if !deleted {
