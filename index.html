@@ -191,33 +191,72 @@
   </main>
 
 <script>
-  // Zapisy startują: niedziela 26 lipca 2026, 15:00 czasu warszawskiego (CEST = UTC+2)
-  var TARGET = Date.UTC(2026, 6, 26, 13, 0, 0); // 15:00 Europe/Warsaw == 13:00 UTC (czas letni)
+  // Two countdown targets. Both mirror internal/regwindow (OpenMoment) and the
+  // event date shown in the meta grid — keep them in sync when either changes.
+  //   REG_OPEN — registration opens: niedziela 26 lipca 2026, 15:00 Europe/Warsaw
+  //   EVENT    — D-Day starts:        sobota   8 sierpnia 2026, 14:00 Europe/Warsaw
+  // Both moments fall in CEST (UTC+2), so the UTC instants are 2h earlier.
+  var REG_OPEN = Date.UTC(2026, 6, 26, 13, 0, 0); // 15:00 Warsaw == 13:00 UTC
+  var EVENT    = Date.UTC(2026, 7,  8, 12, 0, 0); // 14:00 Warsaw == 12:00 UTC
+
+  // apiOpen stays null until /api/count answers, then holds its `open` flag.
+  // On static hosting (e.g. GitHub Pages, no API) it never resolves and the
+  // clock alone (now >= REG_OPEN) decides whether registration is open.
+  var apiOpen = null;
+
   var d=document.getElementById('d'),h=document.getElementById('h'),
       m=document.getElementById('m'),s=document.getElementById('s'),
       label=document.getElementById('count-label'),
-      btn=document.getElementById('register');
+      btn=document.getElementById('register'),
+      cd=document.getElementById('countdown'),
+      ctaWired=false;
 
   function pad(n){return (n<10?'0':'')+n}
 
-  function open(){
-    label.innerHTML='<b>Zapisy są otwarte</b>';
-    document.getElementById('countdown').style.display='none';
+  // Flip the CTA from the disabled "Zapisy wkrótce" placeholder to an active
+  // link to the Matrix bot. Idempotent: safe to call on every tick.
+  function wireCTA(){
+    if(ctaWired)return;
     btn.textContent='Zapisz się przez Matrix';
     btn.setAttribute('href','https://matrix.to/#/@ddaybot:matrix.org');
     btn.setAttribute('target','_blank');
     btn.setAttribute('rel','noopener');
     btn.removeAttribute('disabled');
     btn.removeAttribute('aria-disabled');
+    ctaWired=true;
   }
 
-  function tick(){
-    var diff=Math.floor((TARGET-Date.now())/1000);
-    if(diff<=0){open();return;}
+  function fmt(diff){
+    if(diff<0)diff=0;
     d.textContent=Math.floor(diff/86400);
     h.textContent=pad(Math.floor(diff%86400/3600));
     m.textContent=pad(Math.floor(diff%3600/60));
     s.textContent=pad(diff%60);
+  }
+
+  function tick(){
+    var now=Date.now();
+    // Prefer the API's open flag; fall back to the clock when it's absent.
+    var isOpen = apiOpen===true || now>=REG_OPEN;
+    if(!isOpen){
+      // Before registration opens — count down to REG_OPEN, CTA stays disabled.
+      label.textContent='Zapisy startują za';
+      cd.style.display='';
+      fmt(Math.floor((REG_OPEN-now)/1000));
+      return;
+    }
+    // Registration is open — CTA becomes an active Matrix link.
+    wireCTA();
+    if(now<EVENT){
+      // Count down to the start of the event.
+      label.innerHTML='Do startu <b>D-Day</b>';
+      cd.style.display='';
+      fmt(Math.floor((EVENT-now)/1000));
+    }else{
+      // Event under way — drop the countdown grid.
+      label.innerHTML='<b>D-Day trwa!</b>';
+      cd.style.display='none';
+    }
   }
   tick();
   setInterval(tick,1000);
@@ -248,6 +287,8 @@
     fetch('/api/count',{headers:{'Accept':'application/json'}})
       .then(function(r){if(!r.ok)throw 0;return r.json();})
       .then(function(j){
+        // Let the countdown react to the authoritative open flag, then re-tick.
+        if(j.open!=null){apiOpen=!!j.open;tick();}
         var c=j.count|0,
             lim=(j.limit|0)||20,
             wl=(j.waitlist|0)||20,
