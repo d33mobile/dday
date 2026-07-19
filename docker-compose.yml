@@ -30,9 +30,11 @@ services:
       AGE_KEY_DATA: ${AGE_KEY_DATA:-}
       # SQLite DB path on the persistent volume.
       DB_PATH: /data/dday.db
-      # Force registration open NOW. Remove this line in production so the built-in
-      # time gate applies (opens 2026-07-26 15:00 Europe/Warsaw).
-      REGISTRATION_OPEN: "1"
+      # Registration time gate, sourced from .env (not hardcoded). `make up` writes
+      # REGISTRATION_OPEN=1 there, forcing registration open NOW; set it to 0 or
+      # delete the line to fall back to the built-in time gate (opens 2026-07-26
+      # 15:00 Europe/Warsaw). Empty here means "unset" → time gate.
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
       # Shared secret guarding GET /api/registered (the bot's "already registered?"
       # probe). `make up` writes a stable INTERNAL_TOKEN into .env so both services
       # agree. If empty, the endpoint is disabled (404) and the bot skips the check.
@@ -60,10 +62,10 @@ services:
       # inside the image. Override with the public key passed BY VALUE as base64;
       # the bot prefers AGE_PUB_DATA over AGE_PUB. `make up` writes it into .env.
       AGE_PUB_DATA: ${AGE_PUB_DATA:-}
-      # Same time gate as the web service — forces registration open NOW.
-      # Remove REGISTRATION_OPEN from BOTH services in production so the built-in
-      # time gate applies (opens 2026-07-26 15:00 Europe/Warsaw).
-      REGISTRATION_OPEN: "1"
+      # Same time gate as the web service, sourced from .env. `make up` writes
+      # REGISTRATION_OPEN=1 (open now); set 0 or delete the .env line to fall back
+      # to the built-in time gate (opens 2026-07-26 15:00 Europe/Warsaw).
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
       # Same shared secret as the web service, so the bot can call
       # GET /api/registered before issuing a link. Empty → the bot skips the check.
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}

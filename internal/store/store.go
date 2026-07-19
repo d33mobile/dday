@@ -146,6 +146,22 @@ func (s *Store) Register(handle, nick, city, email string, limit int) (int, erro
 	return int(id), nil
 }
 
+// Delete removes the registration for handle. It reports whether a row was
+// actually removed (false means the handle was not registered). Deleting frees
+// the seat, but the participant number (an AUTOINCREMENT id) is not reissued —
+// that is acceptable for the GDPR erasure path.
+func (s *Store) Delete(handle string) (bool, error) {
+	res, err := s.db.Exec("DELETE FROM registrations WHERE matrix_handle = ?", handle)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // Close closes the underlying database.
 func (s *Store) Close() error {
 	return s.db.Close()

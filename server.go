@@ -13,14 +13,16 @@ import (
 	"time"
 
 	"github.com/d33mobile/dday/internal/matrixbot"
+	"github.com/d33mobile/dday/internal/regwindow"
 	"github.com/d33mobile/dday/internal/store"
 
 	"filippo.io/age"
 )
 
 // openStart is the human-readable moment registration opens, shown on the
-// "closed" page. Matches the countdown target in index.html.
-const openStart = "niedziela 26 lipca 2026, 15:00 (czasu polskiego)"
+// "closed"/"expired" pages. Sourced from regwindow so the web server, the bot
+// and index.html all state the same date. Matches the countdown in index.html.
+const openStart = regwindow.OpenStartText
 
 // tokenTTL bounds how long a registration link stays valid after it was issued.
 // A token older than this (or issued in the future beyond a small clock-skew

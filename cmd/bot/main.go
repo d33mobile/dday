@@ -12,6 +12,8 @@
 //	AGE_PUB             SSH ed25519 public key file (recipient); fallback
 //	REGISTER_URL        base link the token is appended to
 //	TOKEN_SECRET        shared HMAC key authenticating the link token (must match web)
+//	ALLOWED_ROOMS       optional comma-separated room ids; if set, !register is
+//	                    only honoured in those rooms (unset = every room)
 //
 // Note: the bot reads plaintext rooms only (no E2E encryption), so keep the
 // command room unencrypted.
@@ -52,6 +54,13 @@ func main() {
 	c.LinkBase = registerURL
 	c.TokenSecret = os.Getenv("TOKEN_SECRET")
 	c.IsOpen = regwindow.Open
+
+	// Optional allowlist: when ALLOWED_ROOMS is set (comma-separated room ids),
+	// the bot reacts to "!register" only in those rooms. Unset means everywhere.
+	if rooms := strings.TrimSpace(os.Getenv("ALLOWED_ROOMS")); rooms != "" {
+		c.AllowedRooms = matrixbot.ParseAllowedRooms(rooms)
+		log.Printf("restricting !register to %d allowed room(s)", len(c.AllowedRooms))
+	}
 
 	// When INTERNAL_TOKEN is set, ask the web service whether a handle is
 	// already registered before issuing a link. Without it the check is left

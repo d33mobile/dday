@@ -3,10 +3,23 @@ package regwindow
 import "testing"
 
 func TestOpenEnvOverride(t *testing.T) {
-	for _, v := range []string{"1", "true", "TRUE", "yes"} {
+	// Every truthy form ParseBool accepts, plus the non-ParseBool "yes"/"YES".
+	for _, v := range []string{"1", "t", "T", "true", "True", "TRUE", "yes", "YES", " 1 "} {
 		t.Setenv("REGISTRATION_OPEN", v)
 		if !Open() {
 			t.Errorf("Open() with REGISTRATION_OPEN=%q = false, want true", v)
+		}
+	}
+}
+
+// TestOpenFalsyFallsToGate asserts that a falsy or unparseable REGISTRATION_OPEN
+// does NOT force-open; it falls through to the time gate, which is closed while
+// now is before OpenMoment (valid until 2026-07-26 15:00 passes).
+func TestOpenFalsyFallsToGate(t *testing.T) {
+	for _, v := range []string{"0", "f", "false", "False", "FALSE", "nope", ""} {
+		t.Setenv("REGISTRATION_OPEN", v)
+		if Open() {
+			t.Errorf("Open() with REGISTRATION_OPEN=%q = true, want false (time gate before %v)", v, OpenMoment)
 		}
 	}
 }

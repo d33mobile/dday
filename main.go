@@ -45,9 +45,14 @@ func main() {
 	port := env("PORT", "3329")
 
 	healthcheck := flag.Bool("healthcheck", false, "probe /healthz on localhost and exit 0/1")
+	deleteHandle := flag.String("delete", "", "GDPR erasure: delete the registration for this Matrix handle from DB_PATH and exit")
 	flag.Parse()
 	if *healthcheck {
 		runHealthcheck(port)
+		return
+	}
+	if *deleteHandle != "" {
+		runDelete(env("DB_PATH", "./dday.db"), *deleteHandle)
 		return
 	}
 
@@ -166,6 +171,29 @@ func runHealthcheck(port string) {
 		log.Printf("healthcheck: status %d", resp.StatusCode)
 		os.Exit(1)
 	}
+}
+
+// runDelete implements the GDPR erasure CLI: it opens the store at dbPath,
+// deletes the registration for handle, prints the outcome and exits 0 when a row
+// was removed, 1 otherwise (not found or error). The participant number is not
+// reissued afterwards, which is acceptable.
+func runDelete(dbPath, handle string) {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		log.Printf("delete: open store %s: %v", dbPath, err)
+		os.Exit(1)
+	}
+	deleted, err := st.Delete(handle)
+	_ = st.Close()
+	if err != nil {
+		log.Printf("delete %s: %v", handle, err)
+		os.Exit(1)
+	}
+	if !deleted {
+		log.Printf("no registration found for %s", handle)
+		os.Exit(1)
+	}
+	log.Printf("deleted registration for %s", handle)
 }
 
 func env(key, fallback string) string {

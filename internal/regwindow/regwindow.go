@@ -5,6 +5,8 @@ package regwindow
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"time"
 	_ "time/tzdata" // embed the tz database so Europe/Warsaw resolves on distroless
 )
@@ -12,12 +14,22 @@ import (
 // OpenMoment is the instant registration opens: 2026-07-26 15:00 Europe/Warsaw.
 var OpenMoment = time.Date(2026, 7, 26, 15, 0, 0, 0, Warsaw())
 
-// Open reports whether registration is currently open. REGISTRATION_OPEN=1/true
-// forces it open; otherwise it opens once we pass OpenMoment in the Warsaw
-// timezone.
+// OpenStartText is the human-readable rendering of OpenMoment, shared by the web
+// server's "closed"/"expired" pages and the bot's "not open yet" DM so the date
+// is stated in exactly one place. Keep it in sync with OpenMoment above.
+const OpenStartText = "niedziela 26 lipca 2026, 15:00 (czasu polskiego)"
+
+// Open reports whether registration is currently open. A truthy
+// REGISTRATION_OPEN (anything strconv.ParseBool reads as true — 1/t/T/TRUE/
+// true/True — plus "yes") forces it open. Any other value, including a falsy or
+// unparseable one, falls through to the time gate: open once we pass OpenMoment
+// in the Warsaw timezone.
 func Open() bool {
-	switch os.Getenv("REGISTRATION_OPEN") {
-	case "1", "true", "TRUE", "yes":
+	v := strings.TrimSpace(os.Getenv("REGISTRATION_OPEN"))
+	if b, err := strconv.ParseBool(v); err == nil && b {
+		return true
+	}
+	if strings.EqualFold(v, "yes") {
 		return true
 	}
 	return !time.Now().Before(OpenMoment)

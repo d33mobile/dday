@@ -16,10 +16,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"filippo.io/age"
+
+	"github.com/d33mobile/dday/internal/regwindow"
 )
+
+// defaultRateWindow is the minimum interval between two "!register" commands
+// from the same handle that the bot will act on. Further commands inside the
+// window are ignored (logged), so a user spamming "!register" gets a single DM.
+const defaultRateWindow = 30 * time.Second
 
 // Client is a minimal Matrix client-server API client for the bot.
 type Client struct {
@@ -37,14 +46,86 @@ type Client struct {
 	// any error is treated fail-open (proceed to issue a link, since the web
 	// POST dedupes anyway).
 	CheckRegistered func(handle string) (number int, registered bool, err error)
+
+	// AllowedRooms, when non-empty, restricts which rooms Run reacts to
+	// "!register" in. An empty (or nil) set reacts everywhere — the default,
+	// unchanged behaviour. Populate it from the ALLOWED_ROOMS env var.
+	AllowedRooms map[string]bool
+
+	// RateWindow is the minimum interval between two "!register" from the same
+	// handle that the bot acts on; commands inside the window are ignored. Zero
+	// uses defaultRateWindow.
+	RateWindow time.Duration
+
+	// now returns the current time; overridable in tests to drive the rate
+	// limiter deterministically. nil means time.Now.
+	now func() time.Time
+
+	// mu guards the anti-spam maps below.
+	mu       sync.Mutex
+	dmRooms  map[string]string    // handle -> cached DM room id (reused across commands)
+	lastSeen map[string]time.Time // handle -> last acted-on "!register" time
 }
 
 // New returns a Client for the given homeserver.
 func New(hs string) *Client {
 	return &Client{
-		HS:   strings.TrimRight(hs, "/"),
-		HTTP: &http.Client{Timeout: 60 * time.Second},
+		HS:       strings.TrimRight(hs, "/"),
+		HTTP:     &http.Client{Timeout: 60 * time.Second},
+		dmRooms:  make(map[string]string),
+		lastSeen: make(map[string]time.Time),
 	}
+}
+
+// ParseAllowedRooms parses a comma-separated room-id list (the ALLOWED_ROOMS
+// env var) into a set. Blank entries are skipped; an empty result means "react
+// everywhere".
+func ParseAllowedRooms(s string) map[string]bool {
+	m := make(map[string]bool)
+	for _, part := range strings.Split(s, ",") {
+		if r := strings.TrimSpace(part); r != "" {
+			m[r] = true
+		}
+	}
+	return m
+}
+
+// clock returns the current time, honouring the injectable c.now for tests.
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// roomAllowed reports whether Run should react to "!register" in roomID. With
+// no allowlist configured every room is allowed.
+func (c *Client) roomAllowed(roomID string) bool {
+	if len(c.AllowedRooms) == 0 {
+		return true
+	}
+	return c.AllowedRooms[roomID]
+}
+
+// rateLimited reports whether a "!register" from handle arrives too soon after
+// the last one the bot acted on. On the accepted path it records the time so
+// the next command starts a fresh window. Safe for concurrent use.
+func (c *Client) rateLimited(handle string) bool {
+	window := c.RateWindow
+	if window <= 0 {
+		window = defaultRateWindow
+	}
+	now := c.clock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastSeen == nil {
+		c.lastSeen = make(map[string]time.Time)
+	}
+	if last, ok := c.lastSeen[handle]; ok && now.Sub(last) < window {
+		return true
+	}
+	c.lastSeen[handle] = now
+	return false
 }
 
 // Login authenticates with a password and stores the access token.
@@ -144,6 +225,9 @@ func (c *Client) Run(ctx context.Context) error {
 			c.joinRoom(roomID)
 		}
 		for roomID, room := range res.Rooms.Join {
+			if !c.roomAllowed(roomID) {
+				continue
+			}
 			for _, ev := range room.Timeline.Events {
 				if ev.Type != "m.room.message" || ev.Content.MsgType != "m.text" {
 					continue
@@ -175,6 +259,13 @@ func isRegisterCmd(body string) bool {
 // c.IsOpen) they get a "not open yet" notice (no link); otherwise they get a
 // fresh registration link. It returns the created DM room id.
 func (c *Client) HandleRegister(originRoom, user string) (string, error) {
+	// Per-handle rate limit: drop a burst of "!register" from the same user so a
+	// single command yields a single DM. Returns an empty room id, no error.
+	if c.rateLimited(user) {
+		log.Printf("!register from %s ignored (rate limited)", user)
+		return "", nil
+	}
+
 	// Already-registered wins over everything. Fail-open: on error we log and
 	// fall through to the normal flow, since the web POST dedupes anyway.
 	if c.CheckRegistered != nil {
@@ -201,8 +292,8 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("create dm: %w", err)
 		}
-		plain := "Zapisy na D-Day nie są jeszcze otwarte. Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego). Napisz !register ponownie po tym terminie."
-		html := "Zapisy na <b>D-Day</b> nie są jeszcze otwarte.<br>Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego).<br>Napisz <code>!register</code> ponownie po tym terminie."
+		plain := fmt.Sprintf("Zapisy na D-Day nie są jeszcze otwarte. Start: %s. Napisz !register ponownie po tym terminie.", regwindow.OpenStartText)
+		html := fmt.Sprintf("Zapisy na <b>D-Day</b> nie są jeszcze otwarte.<br>Start: %s.<br>Napisz <code>!register</code> ponownie po tym terminie.", regwindow.OpenStartText)
 		if err := c.sendHTML(dmRoom, plain, html); err != nil {
 			return dmRoom, fmt.Errorf("send: %w", err)
 		}
@@ -254,7 +345,16 @@ func localpart(mxid string) string {
 	return s
 }
 
+// createDM opens (or reuses) a private DM with user. The room id is cached per
+// handle so a returning user is not handed a fresh, empty DM on every command.
 func (c *Client) createDM(user string) (string, error) {
+	c.mu.Lock()
+	if room := c.dmRooms[user]; room != "" {
+		c.mu.Unlock()
+		return room, nil
+	}
+	c.mu.Unlock()
+
 	body := map[string]any{
 		"preset":    "trusted_private_chat",
 		"is_direct": true,
@@ -266,6 +366,12 @@ func (c *Client) createDM(user string) (string, error) {
 	if err := c.do("POST", "/_matrix/client/v3/createRoom", body, &out); err != nil {
 		return "", err
 	}
+	c.mu.Lock()
+	if c.dmRooms == nil {
+		c.dmRooms = make(map[string]string)
+	}
+	c.dmRooms[user] = out.RoomID
+	c.mu.Unlock()
 	return out.RoomID, nil
 }
 
@@ -275,11 +381,10 @@ func (c *Client) joinRoom(roomID string) {
 	}
 }
 
-var txnCounter int
+var txnCounter atomic.Int64
 
 func (c *Client) sendHTML(roomID, plain, html string) error {
-	txnCounter++
-	txn := fmt.Sprintf("ddaybot-%d-%d", time.Now().UnixNano(), txnCounter)
+	txn := fmt.Sprintf("ddaybot-%d-%d", time.Now().UnixNano(), txnCounter.Add(1))
 	body := map[string]any{
 		"msgtype":        "m.text",
 		"body":           plain,

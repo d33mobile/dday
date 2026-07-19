@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -171,7 +172,7 @@ func RegisterLink(base, token string) string {
 		sep = "&"
 	}
 	// The token is standard base64 (may contain +, /, =); query-escape it.
-	return base + sep + "t=" + queryEscape(token)
+	return base + sep + "t=" + url.QueryEscape(token)
 }
 
 // registerLink builds a link for "now" using the client's recipient/base,
@@ -185,22 +186,4 @@ func (c *Client) registerLink(handle string) (string, error) {
 		return "", err
 	}
 	return RegisterLink(c.LinkBase, tok), nil
-}
-
-// queryEscape is url.QueryEscape without importing net/url here.
-func queryEscape(s string) string {
-	const upperhex = "0123456789ABCDEF"
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
-			b.WriteByte(ch)
-			continue
-		}
-		b.WriteByte('%')
-		b.WriteByte(upperhex[ch>>4])
-		b.WriteByte(upperhex[ch&0x0f])
-	}
-	return b.String()
 }

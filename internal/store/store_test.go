@@ -128,3 +128,38 @@ func TestRegisterWaitlistCapacity(t *testing.T) {
 		t.Fatalf("count = %d; want %d", n, total)
 	}
 }
+
+// TestDelete covers the GDPR erasure path: deleting an existing handle removes
+// the row and reports true; deleting a missing (or already deleted) handle
+// reports false without error.
+func TestDelete(t *testing.T) {
+	s := openTest(t)
+	if _, err := s.Register("@alice:hs.org", "alice", "Łódź", "a@example.com", 20); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	deleted, err := s.Delete("@alice:hs.org")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if !deleted {
+		t.Fatal("delete of existing handle = false; want true")
+	}
+	if n, _ := s.Count(); n != 0 {
+		t.Fatalf("count after delete = %d; want 0", n)
+	}
+
+	// Deleting again (now absent) reports false, no error.
+	deleted, err = s.Delete("@alice:hs.org")
+	if err != nil {
+		t.Fatalf("second delete: %v", err)
+	}
+	if deleted {
+		t.Fatal("delete of missing handle = true; want false")
+	}
+
+	// A never-registered handle likewise reports false.
+	if deleted, err := s.Delete("@bob:hs.org"); err != nil || deleted {
+		t.Fatalf("delete(unknown) = (%v, %v); want (false, nil)", deleted, err)
+	}
+}
