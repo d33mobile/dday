@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -23,11 +25,12 @@ const openStart = "niedziela 26 lipca 2026, 15:00 (czasu polskiego)"
 // mux can be built in tests with an in-memory store, an ephemeral key and an
 // injectable time gate.
 type deps struct {
-	store     *store.Store
-	identity  age.Identity
-	seatLimit int
-	isOpen    func() bool
-	files     http.FileSystem // static files for GET /
+	store         *store.Store
+	identity      age.Identity
+	seatLimit     int
+	isOpen        func() bool
+	files         http.FileSystem // static files for GET /
+	internalToken string          // bearer token guarding /api/registered; empty disables it
 }
 
 // formView is the data model for the registration form template.
@@ -63,6 +66,7 @@ func newMux(d deps) http.Handler {
 
 	mux.HandleFunc("/register", d.handleRegister)
 	mux.HandleFunc("/api/count", d.handleCount)
+	mux.HandleFunc("/api/registered", d.handleRegistered)
 	mux.HandleFunc("/privacy", d.handlePrivacy)
 	mux.Handle("/", http.FileServer(d.files))
 
@@ -98,6 +102,21 @@ func (d deps) registerGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nick := nickFromHandle(payload.Handle)
+
+	// Link expiry: once this handle is registered the link is spent. Show the
+	// confirmation instead of the form, so a re-used link cannot open a second
+	// registration attempt (the POST path already dedupes on ErrDuplicate).
+	number, registered, err := d.store.Number(payload.Handle)
+	if err != nil {
+		d.serverError(w, "number", err)
+		return
+	}
+	if registered {
+		d.renderMessage(w, http.StatusOK, "Link już wykorzystany",
+			fmt.Sprintf("Jesteś już zapisany (#%d).", number),
+			"Twoja rejestracja jest kompletna — ten link został już wykorzystany.")
+		return
+	}
 
 	if !d.isOpen() {
 		d.renderMessage(w, http.StatusOK, "Zapisy jeszcze nieotwarte",
@@ -192,6 +211,42 @@ func (d deps) handleCount(w http.ResponseWriter, _ *http.Request) {
 		"count": count,
 		"limit": d.seatLimit,
 		"open":  d.isOpen(),
+	})
+}
+
+// handleRegistered answers the bot's internal "is this handle registered?"
+// query. It is guarded by a shared bearer token: when internalToken is empty
+// the endpoint is disabled (404) so the registration list can never leak; a
+// missing or wrong token is 401; a missing handle is 400. On success it returns
+// {"registered": bool, "number": int}.
+func (d deps) handleRegistered(w http.ResponseWriter, r *http.Request) {
+	if d.internalToken == "" {
+		http.NotFound(w, r)
+		return
+	}
+	want := "Bearer " + d.internalToken
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	handle := strings.TrimSpace(r.URL.Query().Get("h"))
+	if handle == "" {
+		http.Error(w, "missing handle", http.StatusBadRequest)
+		return
+	}
+	if d.store == nil {
+		http.Error(w, "registration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	number, registered, err := d.store.Number(handle)
+	if err != nil {
+		d.serverError(w, "registered", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"registered": registered,
+		"number":     number,
 	})
 }
 

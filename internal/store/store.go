@@ -75,6 +75,22 @@ func (s *Store) Count() (int, error) {
 	return n, nil
 }
 
+// Number returns the participant number for handle and whether that handle is
+// registered. An unregistered handle yields (0, false, nil); a lookup failure
+// yields a non-nil error.
+func (s *Store) Number(handle string) (int, bool, error) {
+	var id int
+	err := s.db.QueryRow("SELECT id FROM registrations WHERE matrix_handle = ?", handle).Scan(&id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, false, nil
+	case err != nil:
+		return 0, false, err
+	default:
+		return id, true, nil
+	}
+}
+
 // Register atomically records a new participant. It returns the assigned
 // participant number (the row id). If the handle is already present it returns
 // the existing number together with ErrDuplicate. If the seat limit is reached

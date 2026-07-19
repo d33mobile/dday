@@ -25,9 +25,13 @@ up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
 	@test -f config/dday_ed25519 || { echo "config/dday_ed25519 missing — run: make keys"; exit 1; }
 	@test -f config/dday_ed25519.pub || { echo "config/dday_ed25519.pub missing — run: make keys"; exit 1; }
 	@test -f matrix.env || { echo "matrix.env missing — create matrix.env (see matrix.env.example) for the bot"; exit 1; }
-	@{ printf 'AGE_KEY_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519)"; \
-	   printf 'AGE_PUB_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519.pub)"; } > .env
-	@echo "wrote .env (AGE_KEY_DATA + AGE_PUB_DATA from config/dday_ed25519[.pub])"
+	@tok=$$(grep -E '^INTERNAL_TOKEN=' .env 2>/dev/null | head -n1 | cut -d= -f2-); \
+	 if [ -z "$$tok" ]; then tok=$$(openssl rand -hex 32); echo "generated new INTERNAL_TOKEN"; \
+	 else echo "reusing existing INTERNAL_TOKEN from .env"; fi; \
+	 { printf 'AGE_KEY_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519)"; \
+	   printf 'AGE_PUB_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519.pub)"; \
+	   printf 'INTERNAL_TOKEN=%s\n' "$$tok"; } > .env
+	@echo "wrote .env (AGE_KEY_DATA + AGE_PUB_DATA + INTERNAL_TOKEN)"
 	docker compose up -d --build
 
 down: ## Stop the compose stack

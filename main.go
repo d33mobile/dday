@@ -72,11 +72,12 @@ func main() {
 	}
 
 	handler := newMux(deps{
-		store:     st,
-		identity:  identity,
-		seatLimit: seatLimit,
-		isOpen:    regwindow.Open,
-		files:     files,
+		store:         st,
+		identity:      identity,
+		seatLimit:     seatLimit,
+		isOpen:        regwindow.Open,
+		files:         files,
+		internalToken: os.Getenv("INTERNAL_TOKEN"),
 	})
 
 	srv := &http.Server{

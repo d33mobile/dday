@@ -26,7 +26,9 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 	const userMXID = "@alice:mock"
 
 	created := make(chan map[string]any, 1)
-	sent := make(chan map[string]any, 1)
+	// Buffered for two sends: the DM (with the link) and the public nudge that
+	// Run posts back in the origin room.
+	sent := make(chan map[string]any, 4)
 
 	mux := http.NewServeMux()
 

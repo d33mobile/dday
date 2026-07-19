@@ -62,6 +62,29 @@ func TestRegisterDuplicate(t *testing.T) {
 	}
 }
 
+func TestNumber(t *testing.T) {
+	s := openTest(t)
+
+	if num, ok, err := s.Number("@alice:hs.org"); err != nil || ok || num != 0 {
+		t.Fatalf("Number before register = (%d, %v, %v); want (0, false, nil)", num, ok, err)
+	}
+
+	want, err := s.Register("@alice:hs.org", "alice", "Łódź", "a@example.com", 20)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	num, ok, err := s.Number("@alice:hs.org")
+	if err != nil || !ok || num != want {
+		t.Fatalf("Number after register = (%d, %v, %v); want (%d, true, nil)", num, ok, err, want)
+	}
+
+	// A different, unregistered handle is still reported absent.
+	if num, ok, _ := s.Number("@bob:hs.org"); ok || num != 0 {
+		t.Fatalf("Number(unknown) = (%d, %v); want (0, false)", num, ok)
+	}
+}
+
 func TestRegisterFull(t *testing.T) {
 	s := openTest(t)
 	if _, err := s.Register("@a:hs", "a", "Łódź", "a@x.com", 2); err != nil {

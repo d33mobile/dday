@@ -19,8 +19,11 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -47,6 +50,18 @@ func main() {
 	c.Recipient = recipient
 	c.LinkBase = registerURL
 	c.IsOpen = regwindow.Open
+
+	// When INTERNAL_TOKEN is set, ask the web service whether a handle is
+	// already registered before issuing a link. Without it the check is left
+	// nil (fail-open): the bot always issues a link and the web POST dedupes.
+	if tok := strings.TrimSpace(os.Getenv("INTERNAL_TOKEN")); tok != "" {
+		origin, err := originOf(registerURL)
+		if err != nil {
+			log.Fatalf("REGISTER_URL: %v", err)
+		}
+		c.CheckRegistered = registeredChecker(c.HTTP, origin, tok)
+		log.Printf("already-registered check enabled against %s", origin)
+	}
 
 	if err := c.Login(user, pass); err != nil {
 		log.Fatalf("login: %v", err)
@@ -75,6 +90,48 @@ func loadRecipient() (age.Recipient, error) {
 		return matrixbot.ParseRecipient(string(data))
 	}
 	return matrixbot.LoadRecipient(mustEnv("AGE_PUB"))
+}
+
+// originOf extracts the scheme://host origin from a full URL.
+func originOf(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("URL %q lacks scheme/host", raw)
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+// registeredChecker returns a CheckRegistered function that queries the web
+// service's internal GET /api/registered?h= endpoint with the shared bearer
+// token. A non-200 response or transport error surfaces as an error, which the
+// bot treats fail-open.
+func registeredChecker(httpc *http.Client, origin, token string) func(string) (int, bool, error) {
+	return func(handle string) (int, bool, error) {
+		req, err := http.NewRequest(http.MethodGet, origin+"/api/registered?h="+url.QueryEscape(handle), nil)
+		if err != nil {
+			return 0, false, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := httpc.Do(req)
+		if err != nil {
+			return 0, false, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return 0, false, fmt.Errorf("GET /api/registered -> %d", resp.StatusCode)
+		}
+		var out struct {
+			Registered bool `json:"registered"`
+			Number     int  `json:"number"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return 0, false, err
+		}
+		return out.Number, out.Registered, nil
+	}
 }
 
 func env(k, fallback string) string {

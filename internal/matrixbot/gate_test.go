@@ -24,7 +24,8 @@ func TestHandleRegisterClosed(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 
-	if _, err := c.HandleRegister("@alice:mock"); err != nil {
+	// Empty origin room: the DM is still sent, the public nudge is skipped.
+	if _, err := c.HandleRegister("", "@alice:mock"); err != nil {
 		t.Fatalf("HandleRegister: %v", err)
 	}
 

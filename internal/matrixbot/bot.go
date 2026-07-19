@@ -30,6 +30,12 @@ type Client struct {
 	Recipient age.Recipient // age recipient used to encrypt the link token
 	LinkBase  string        // registration URL the token is appended to
 	IsOpen    func() bool   // registration time gate; nil means always open
+
+	// CheckRegistered reports whether a handle is already registered (and its
+	// participant number), by asking the web service. nil skips the check;
+	// any error is treated fail-open (proceed to issue a link, since the web
+	// POST dedupes anyway).
+	CheckRegistered func(handle string) (number int, registered bool, err error)
 }
 
 // New returns a Client for the given homeserver.
@@ -145,7 +151,7 @@ func (c *Client) Run(ctx context.Context) error {
 					continue
 				}
 				log.Printf("!register from %s in %s", ev.Sender, roomID)
-				if _, err := c.HandleRegister(ev.Sender); err != nil {
+				if _, err := c.HandleRegister(roomID, ev.Sender); err != nil {
 					log.Printf("register for %s failed: %v", ev.Sender, err)
 				}
 			}
@@ -158,38 +164,93 @@ func isRegisterCmd(body string) bool {
 	return len(f) > 0 && strings.EqualFold(f[0], "!register")
 }
 
-// HandleRegister opens a DM with user. When registration is open it sends a
-// fresh registration link; when it is closed (per c.IsOpen) it instead sends a
-// "not open yet" notice with the start time and no link. It returns the created
-// room id.
-func (c *Client) HandleRegister(user string) (string, error) {
+// HandleRegister reacts to a "!register" that arrived in originRoom from user.
+// It always DMs the user privately, and — unless originRoom is empty or is the
+// DM itself — also posts a short public nudge back in originRoom pointing the
+// user at their DMs.
+//
+// The DM content depends on state: an already-registered user is told
+// re-registration is not possible (no link); when registration is closed (per
+// c.IsOpen) they get a "not open yet" notice (no link); otherwise they get a
+// fresh registration link. It returns the created DM room id.
+func (c *Client) HandleRegister(originRoom, user string) (string, error) {
+	// Already-registered wins over everything. Fail-open: on error we log and
+	// fall through to the normal flow, since the web POST dedupes anyway.
+	if c.CheckRegistered != nil {
+		number, registered, err := c.CheckRegistered(user)
+		if err != nil {
+			log.Printf("check registered for %s: %v (proceeding)", user, err)
+		} else if registered {
+			dmRoom, err := c.createDM(user)
+			if err != nil {
+				return "", fmt.Errorf("create dm: %w", err)
+			}
+			plain := fmt.Sprintf("Jesteś już zapisany (#%d). Ponowna rejestracja nie jest możliwa.", number)
+			html := fmt.Sprintf("Jesteś już zapisany (<b>#%d</b>). Ponowna rejestracja nie jest możliwa.", number)
+			if err := c.sendHTML(dmRoom, plain, html); err != nil {
+				return dmRoom, fmt.Errorf("send: %w", err)
+			}
+			c.nudge(originRoom, dmRoom, user, "napisałem Ci szczegóły na priv.")
+			return dmRoom, nil
+		}
+	}
+
 	if c.IsOpen != nil && !c.IsOpen() {
-		roomID, err := c.createDM(user)
+		dmRoom, err := c.createDM(user)
 		if err != nil {
 			return "", fmt.Errorf("create dm: %w", err)
 		}
 		plain := "Zapisy na D-Day nie są jeszcze otwarte. Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego). Napisz !register ponownie po tym terminie."
 		html := "Zapisy na <b>D-Day</b> nie są jeszcze otwarte.<br>Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego).<br>Napisz <code>!register</code> ponownie po tym terminie."
-		if err := c.sendHTML(roomID, plain, html); err != nil {
-			return roomID, fmt.Errorf("send: %w", err)
+		if err := c.sendHTML(dmRoom, plain, html); err != nil {
+			return dmRoom, fmt.Errorf("send: %w", err)
 		}
-		return roomID, nil
+		c.nudge(originRoom, dmRoom, user, "napisałem Ci szczegóły na priv.")
+		return dmRoom, nil
 	}
 
 	link, err := c.registerLink(user)
 	if err != nil {
 		return "", fmt.Errorf("build link: %w", err)
 	}
-	roomID, err := c.createDM(user)
+	dmRoom, err := c.createDM(user)
 	if err != nil {
 		return "", fmt.Errorf("create dm: %w", err)
 	}
 	plain := fmt.Sprintf("Cześć! Zapisy na D-Day (unconference w Hakierspejsie): %s", link)
 	html := fmt.Sprintf("Cześć! Zapisy na <b>D-Day</b> (unconference w Hakierspejsie):<br><a href=%q>zarejestruj się</a>", link)
-	if err := c.sendHTML(roomID, plain, html); err != nil {
-		return roomID, fmt.Errorf("send: %w", err)
+	if err := c.sendHTML(dmRoom, plain, html); err != nil {
+		return dmRoom, fmt.Errorf("send: %w", err)
 	}
-	return roomID, nil
+	c.nudge(originRoom, dmRoom, user, "wysłałem Ci tam link do rejestracji.")
+	return dmRoom, nil
+}
+
+// nudge posts a short public reply in originRoom (the channel the "!register"
+// came from), @-mentioning the user and pointing them at their DMs. It is a
+// best-effort side channel: it is skipped when originRoom is unknown or is the
+// DM itself, and any send error is only logged.
+func (c *Client) nudge(originRoom, dmRoom, user, tail string) {
+	if originRoom == "" || originRoom == dmRoom {
+		return
+	}
+	name := localpart(user)
+	plain := fmt.Sprintf("Hej %s, sprawdź prywatne wiadomości - %s", name, tail)
+	html := fmt.Sprintf("Hej <a href=%q>%s</a>, sprawdź prywatne wiadomości - %s",
+		"https://matrix.to/#/"+user, name, tail)
+	if err := c.sendHTML(originRoom, plain, html); err != nil {
+		log.Printf("nudge in %s: %v", originRoom, err)
+	}
+}
+
+// localpart turns a Matrix MXID "@alice:hs.org" into "alice"; any other shape
+// is returned unchanged.
+func localpart(mxid string) string {
+	s := strings.TrimPrefix(mxid, "@")
+	if i := strings.IndexByte(s, ':'); i > 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func (c *Client) createDM(user string) (string, error) {

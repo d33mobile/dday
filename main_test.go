@@ -57,6 +57,12 @@ type testEnv struct {
 }
 
 func newTestEnv(t *testing.T, open bool, limit int) *testEnv {
+	return newTestEnvToken(t, open, limit, "")
+}
+
+// newTestEnvToken is newTestEnv with an explicit internal token, so tests can
+// exercise the guarded /api/registered endpoint (empty token disables it).
+func newTestEnvToken(t *testing.T, open bool, limit int, internalToken string) *testEnv {
 	t.Helper()
 	rcpt, id := genKeypair(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -71,11 +77,12 @@ func newTestEnv(t *testing.T, open bool, limit int) *testEnv {
 	}
 
 	h := newMux(deps{
-		store:     st,
-		identity:  id,
-		seatLimit: limit,
-		isOpen:    func() bool { return open },
-		files:     http.FS(sub),
+		store:         st,
+		identity:      id,
+		seatLimit:     limit,
+		isOpen:        func() bool { return open },
+		files:         http.FS(sub),
+		internalToken: internalToken,
 	})
 	return &testEnv{recipient: rcpt, store: st, handler: h}
 }
@@ -347,7 +354,9 @@ func TestRegisterFlowBotToWeb(t *testing.T) {
 	bot.Recipient = e.recipient
 	bot.LinkBase = "https://dday.hs-ldz.pl/register"
 
-	if _, err := bot.HandleRegister("@alice:hs.org"); err != nil {
+	// Empty origin room: the bot DMs the link, and skips the public nudge (the
+	// mock has no channel to nudge here).
+	if _, err := bot.HandleRegister("", "@alice:hs.org"); err != nil {
 		t.Fatalf("bot HandleRegister: %v", err)
 	}
 
@@ -389,6 +398,99 @@ func TestRegisterFlowBotToWeb(t *testing.T) {
 	}
 	if n, _ := e.store.Count(); n != 1 {
 		t.Fatalf("count = %d; want 1", n)
+	}
+
+	// Link expiry: re-using the bot's token after registration no longer opens
+	// the form — the web side shows the "already registered" confirmation.
+	grec2 := e.get(t, "/register?t="+url.QueryEscape(token))
+	if body := grec2.Body.String(); !strings.Contains(body, "już zapisany") || strings.Contains(body, `name="email"`) {
+		t.Errorf("second GET should be 'już zapisany' without the form, got: %s", body)
+	}
+}
+
+// TestRegisterLinkExpiresAfterRegistration verifies req 2: once a handle is
+// registered, GET /register with the same token stops rendering the form and
+// shows the "already registered / link spent" confirmation instead.
+func TestRegisterLinkExpiresAfterRegistration(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	tok := e.token(t, "@alice:hs.org")
+
+	if rec := e.post(t, url.Values{"t": {tok}, "city": {"Łódź"}, "email": {"a@example.com"}}); rec.Code != http.StatusOK {
+		t.Fatalf("register status = %d", rec.Code)
+	}
+
+	rec := e.get(t, "/register?t="+url.QueryEscape(tok))
+	body := rec.Body.String()
+	if !strings.Contains(body, "już zapisany") {
+		t.Errorf("expired-link GET missing 'już zapisany': %s", body)
+	}
+	if strings.Contains(body, `name="email"`) {
+		t.Errorf(`expired-link GET must NOT render the form (found name="email")`)
+	}
+}
+
+// TestApiRegistered covers req 3 (web side): the guarded internal endpoint the
+// bot uses to detect an already-registered handle.
+func TestApiRegistered(t *testing.T) {
+	const tok = "s3cr3t-internal-token"
+	e := newTestEnvToken(t, true, 20, tok)
+	const handle = "@alice:hs.org"
+
+	getReg := func(auth, h string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/registered?h="+url.QueryEscape(h), nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		e.handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := getReg("", handle); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no auth = %d; want 401", rec.Code)
+	}
+	if rec := getReg("Bearer wrong", handle); rec.Code != http.StatusUnauthorized {
+		t.Errorf("wrong token = %d; want 401", rec.Code)
+	}
+	if rec := getReg("Bearer "+tok, ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("empty handle = %d; want 400", rec.Code)
+	}
+
+	var got struct {
+		Registered bool `json:"registered"`
+		Number     int  `json:"number"`
+	}
+	rec := getReg("Bearer "+tok, handle)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authed GET = %d; want 200", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Registered || got.Number != 0 {
+		t.Errorf("before register = %+v; want {false 0}", got)
+	}
+
+	if _, err := e.store.Register(handle, "alice", "Łódź", "a@example.com", 20); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	rec = getReg("Bearer "+tok, handle)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Registered || got.Number != 1 {
+		t.Errorf("after register = %+v; want {true 1}", got)
+	}
+
+	// An empty internal token disables the endpoint entirely (404), so the
+	// registration list can never leak.
+	edis := newTestEnv(t, true, 20)
+	req := httptest.NewRequest(http.MethodGet, "/api/registered?h="+url.QueryEscape(handle), nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	drec := httptest.NewRecorder()
+	edis.handler.ServeHTTP(drec, req)
+	if drec.Code != http.StatusNotFound {
+		t.Errorf("disabled endpoint = %d; want 404", drec.Code)
 	}
 }
 
