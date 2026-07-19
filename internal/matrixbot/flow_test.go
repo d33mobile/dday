@@ -89,6 +89,7 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 	c := New(srv.URL)
 	c.Recipient = recipient
 	c.LinkBase = "https://dday.hs-ldz.pl/register"
+	c.TokenSecret = testSecret
 	if err := c.Login(botMXID, "secret"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 		t.Fatalf("no token in link %q", link)
 	}
 
-	payload, err := DecodeRegToken(identity, token)
+	payload, err := DecodeRegToken(identity, testSecret, token)
 	if err != nil {
 		t.Fatalf("decode token: %v", err)
 	}

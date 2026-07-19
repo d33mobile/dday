@@ -11,6 +11,7 @@
 //	AGE_PUB_DATA        base64 of the SSH ed25519 public key (recipient); preferred
 //	AGE_PUB             SSH ed25519 public key file (recipient); fallback
 //	REGISTER_URL        base link the token is appended to
+//	TOKEN_SECRET        shared HMAC key authenticating the link token (must match web)
 //
 // Note: the bot reads plaintext rooms only (no E2E encryption), so keep the
 // command room unencrypted.
@@ -49,6 +50,7 @@ func main() {
 	c := matrixbot.New(hs)
 	c.Recipient = recipient
 	c.LinkBase = registerURL
+	c.TokenSecret = os.Getenv("TOKEN_SECRET")
 	c.IsOpen = regwindow.Open
 
 	// When INTERNAL_TOKEN is set, ask the web service whether a handle is

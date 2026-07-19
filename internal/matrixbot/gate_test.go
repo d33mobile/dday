@@ -19,6 +19,7 @@ func TestHandleRegisterClosed(t *testing.T) {
 	c := New(srv.URL)
 	c.Recipient = recipient
 	c.LinkBase = "https://dday.hs-ldz.pl/register"
+	c.TokenSecret = testSecret
 	c.IsOpen = func() bool { return false }
 	if err := c.Login("@ddaybot:mock", "secret"); err != nil {
 		t.Fatalf("login: %v", err)

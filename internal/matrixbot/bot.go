@@ -23,13 +23,14 @@ import (
 
 // Client is a minimal Matrix client-server API client for the bot.
 type Client struct {
-	HS        string        // homeserver base URL, no trailing slash
-	Token     string        // access token (set by Login)
-	Self      string        // full MXID of the bot (set by Login)
-	HTTP      *http.Client  // HTTP client
-	Recipient age.Recipient // age recipient used to encrypt the link token
-	LinkBase  string        // registration URL the token is appended to
-	IsOpen    func() bool   // registration time gate; nil means always open
+	HS          string        // homeserver base URL, no trailing slash
+	Token       string        // access token (set by Login)
+	Self        string        // full MXID of the bot (set by Login)
+	HTTP        *http.Client  // HTTP client
+	Recipient   age.Recipient // age recipient used to encrypt the link token
+	LinkBase    string        // registration URL the token is appended to
+	TokenSecret string        // shared HMAC key authenticating the link token
+	IsOpen      func() bool   // registration time gate; nil means always open
 
 	// CheckRegistered reports whether a handle is already registered (and its
 	// participant number), by asking the web service. nil skips the check;

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/d33mobile/dday/internal/matrixbot"
 	"github.com/d33mobile/dday/internal/store"
@@ -21,6 +22,15 @@ import (
 // "closed" page. Matches the countdown target in index.html.
 const openStart = "niedziela 26 lipca 2026, 15:00 (czasu polskiego)"
 
+// tokenTTL bounds how long a registration link stays valid after it was issued.
+// A token older than this (or issued in the future beyond a small clock-skew
+// tolerance) is rejected in decode().
+const tokenTTL = 48 * time.Hour
+
+// tokenFutureSkew tolerates a small amount of clock drift when the token's
+// Issued time is ahead of the server's clock.
+const tokenFutureSkew = 5 * time.Minute
+
 // deps carries the runtime dependencies of the registration handlers, so the
 // mux can be built in tests with an in-memory store, an ephemeral key and an
 // injectable time gate.
@@ -31,6 +41,7 @@ type deps struct {
 	isOpen        func() bool
 	files         http.FileSystem // static files for GET /
 	internalToken string          // bearer token guarding /api/registered; empty disables it
+	tokenSecret   string          // shared HMAC key authenticating registration tokens
 }
 
 // formView is the data model for the registration form template.
@@ -271,10 +282,19 @@ func (d deps) decode(w http.ResponseWriter, token string) (matrixbot.RegPayload,
 			"Skorzystaj z linku otrzymanego od bota na czacie Matrix.")
 		return matrixbot.RegPayload{}, false
 	}
-	payload, err := matrixbot.DecodeRegToken(d.identity, token)
+	payload, err := matrixbot.DecodeRegToken(d.identity, d.tokenSecret, token)
 	if err != nil {
 		d.renderMessage(w, http.StatusBadRequest, "Nieprawidłowy link",
 			"Ten link rejestracyjny jest nieprawidłowy lub uszkodzony.",
+			"Poproś bota o nowy link na czacie Matrix.")
+		return matrixbot.RegPayload{}, false
+	}
+	// TTL: reject a stale link, or one whose Issued time is too far in the
+	// future (beyond a small clock-skew tolerance).
+	elapsed := time.Now().Unix() - payload.Issued
+	if elapsed > int64(tokenTTL/time.Second) || elapsed < -int64(tokenFutureSkew/time.Second) {
+		d.renderMessage(w, http.StatusBadRequest, "Link wygasł",
+			"Ten link rejestracyjny wygasł.",
 			"Poproś bota o nowy link na czacie Matrix.")
 		return matrixbot.RegPayload{}, false
 	}

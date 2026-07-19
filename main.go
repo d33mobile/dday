@@ -78,6 +78,7 @@ func main() {
 		isOpen:        regwindow.Open,
 		files:         files,
 		internalToken: os.Getenv("INTERNAL_TOKEN"),
+		tokenSecret:   os.Getenv("TOKEN_SECRET"),
 	})
 
 	srv := &http.Server{

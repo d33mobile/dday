@@ -23,6 +23,7 @@ func TestHandleRegisterAlreadyRegistered(t *testing.T) {
 	c := New(srv.URL)
 	c.Recipient = recipient
 	c.LinkBase = "https://dday.hs-ldz.pl/register"
+	c.TokenSecret = testSecret
 	c.CheckRegistered = func(string) (int, bool, error) { return 7, true, nil }
 	if err := c.Login("@ddaybot:mock", "secret"); err != nil {
 		t.Fatalf("login: %v", err)
@@ -83,6 +84,7 @@ func TestHandleRegisterNudge(t *testing.T) {
 	c := New(srv.URL)
 	c.Recipient = recipient
 	c.LinkBase = "https://dday.hs-ldz.pl/register"
+	c.TokenSecret = testSecret
 	if err := c.Login("@ddaybot:mock", "secret"); err != nil {
 		t.Fatalf("login: %v", err)
 	}

@@ -49,6 +49,10 @@ func genKeypair(t *testing.T) (age.Recipient, age.Identity) {
 	return r, id
 }
 
+// testTokenSecret is the shared HMAC key both the test token helpers and the
+// mux under test use, so tokens the tests mint verify in decode().
+const testTokenSecret = "web-token-secret"
+
 // testEnv wires an ephemeral store, keypair and mux together.
 type testEnv struct {
 	recipient age.Recipient
@@ -83,13 +87,21 @@ func newTestEnvToken(t *testing.T, open bool, limit int, internalToken string) *
 		isOpen:        func() bool { return open },
 		files:         http.FS(sub),
 		internalToken: internalToken,
+		tokenSecret:   testTokenSecret,
 	})
 	return &testEnv{recipient: rcpt, store: st, handler: h}
 }
 
 func (e *testEnv) token(t *testing.T, handle string) string {
 	t.Helper()
-	tok, err := matrixbot.EncodeRegToken(e.recipient, matrixbot.RegPayload{Handle: handle, Issued: time.Now().Unix()})
+	return e.tokenAt(t, handle, time.Now().Unix())
+}
+
+// tokenAt mints a token with an explicit Issued time, so tests can exercise the
+// TTL (expired / future-dated links).
+func (e *testEnv) tokenAt(t *testing.T, handle string, issued int64) string {
+	t.Helper()
+	tok, err := matrixbot.EncodeRegToken(e.recipient, testTokenSecret, matrixbot.RegPayload{Handle: handle, Issued: issued})
 	if err != nil {
 		t.Fatalf("encode token: %v", err)
 	}
@@ -248,6 +260,50 @@ func TestRegisterBadToken(t *testing.T) {
 	}
 }
 
+// TestRegisterExpiredToken verifies the TTL: a token whose Issued time is older
+// than tokenTTL is rejected with the "Link wygasł" page and never registers.
+func TestRegisterExpiredToken(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	old := time.Now().Add(-72 * time.Hour).Unix()
+	tok := e.tokenAt(t, "@alice:hs.org", old)
+
+	rec := e.get(t, "/register?t="+url.QueryEscape(tok))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expired token GET status = %d; want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "wygasł") {
+		t.Errorf("expired token body missing 'wygasł': %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `name="email"`) {
+		t.Errorf("expired token must NOT render the form")
+	}
+
+	// POST with the same stale token must also be refused (no registration).
+	prec := e.post(t, url.Values{"t": {tok}, "city": {"Łódź"}, "email": {"a@example.com"}})
+	if !strings.Contains(prec.Body.String(), "wygasł") {
+		t.Errorf("expired token POST missing 'wygasł': %s", prec.Body.String())
+	}
+	if n, _ := e.store.Count(); n != 0 {
+		t.Fatalf("count = %d; want 0 after expired token", n)
+	}
+}
+
+// TestRegisterFutureToken verifies the clock-skew guard: a token issued far in
+// the future (beyond the tolerance) is treated as expired/invalid.
+func TestRegisterFutureToken(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+	future := time.Now().Add(1 * time.Hour).Unix()
+	tok := e.tokenAt(t, "@alice:hs.org", future)
+
+	rec := e.get(t, "/register?t="+url.QueryEscape(tok))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("future token GET status = %d; want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "wygasł") {
+		t.Errorf("future token body missing 'wygasł': %s", rec.Body.String())
+	}
+}
+
 func TestRegisterInvalidEmail(t *testing.T) {
 	e := newTestEnv(t, true, 20)
 	tok := e.token(t, "@alice:hs.org")
@@ -353,6 +409,7 @@ func TestRegisterFlowBotToWeb(t *testing.T) {
 	bot.Token = "tok"
 	bot.Recipient = e.recipient
 	bot.LinkBase = "https://dday.hs-ldz.pl/register"
+	bot.TokenSecret = testTokenSecret // same shared secret the web mux verifies with
 
 	// Empty origin room: the bot DMs the link, and skips the public nudge (the
 	// mock has no channel to nudge here).

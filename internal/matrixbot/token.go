@@ -2,6 +2,8 @@ package matrixbot
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,20 +16,43 @@ import (
 	"filippo.io/age/agessh"
 )
 
-// The registration token carries a JSON RegPayload{handle, issued}, age-encrypted
-// to the SSH ed25519 recipient, then standard-base64 encoded. Only the holder of
-// the private key can decrypt it, so the link is unforgeable and carries both the
-// sender's Matrix handle (used to predefine the nick) and a verifiable issue time.
+// The registration token carries a JSON RegPayload{handle, issued, mac},
+// age-encrypted to the SSH ed25519 recipient, then standard-base64 encoded.
+//
+// Two independent layers protect the token:
+//
+//   - Confidentiality comes from age: only the holder of the private key can
+//     decrypt the payload.
+//   - Authenticity comes from an HMAC-SHA256 over (handle, issued) keyed by the
+//     shared TOKEN_SECRET. On decode we recompute the MAC and compare it
+//     constant-time; a wrong or missing MAC is rejected.
+//
+// The age recipient (the SSH .pub key) is only needed to ENCRYPT to the web
+// server, so it is not a secret — leaking it does NOT let an attacker forge a
+// token, because forging still requires the HMAC key (TOKEN_SECRET). An empty
+// TOKEN_SECRET degrades to no real authenticity (both bot and web must agree);
+// `make up` always generates one, so production is authenticated by default.
 //
 // Conceptually:
 //
-//	echo '{"h":"@user:hs","t":1234567890}' | age -e -i key | base64 -w 0
+//	echo '{"h":"@user:hs","t":1234567890,"m":"<hmac>"}' | age -e -i key | base64 -w 0
 
 // RegPayload is the decrypted content of a registration token: the Matrix handle
-// of the sender and the unix time the token was issued.
+// of the sender, the unix time the token was issued, and MAC — a base64
+// HMAC-SHA256 over (Handle, Issued) keyed by the shared TOKEN_SECRET.
 type RegPayload struct {
 	Handle string `json:"h"`
 	Issued int64  `json:"t"`
+	MAC    string `json:"m,omitempty"`
+}
+
+// tokenMAC returns the base64 HMAC-SHA256 of the canonical (handle, issued)
+// representation keyed by secret. The canonical form is "handle\nissued", so the
+// two fields cannot be ambiguously concatenated.
+func tokenMAC(secret, handle string, issued int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	fmt.Fprintf(mac, "%s\n%d", handle, issued)
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // LoadRecipient reads an SSH ed25519 public key file (authorized_keys line) and
@@ -109,8 +134,10 @@ func DecryptToken(id age.Identity, token string) (string, error) {
 	return string(data), nil
 }
 
-// EncodeRegToken marshals p to JSON and produces an age-encrypted, base64 token.
-func EncodeRegToken(r age.Recipient, p RegPayload) (string, error) {
+// EncodeRegToken stamps p with an HMAC over (Handle, Issued) keyed by secret,
+// marshals it to JSON and produces an age-encrypted, base64 token.
+func EncodeRegToken(r age.Recipient, secret string, p RegPayload) (string, error) {
+	p.MAC = tokenMAC(secret, p.Handle, p.Issued)
 	b, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -118,8 +145,10 @@ func EncodeRegToken(r age.Recipient, p RegPayload) (string, error) {
 	return EncryptToken(r, string(b))
 }
 
-// DecodeRegToken reverses EncodeRegToken using the private identity.
-func DecodeRegToken(id age.Identity, token string) (RegPayload, error) {
+// DecodeRegToken reverses EncodeRegToken using the private identity, then
+// verifies the HMAC over (Handle, Issued) keyed by secret in constant time. A
+// missing or mismatching MAC (e.g. a forged or old-format token) is rejected.
+func DecodeRegToken(id age.Identity, secret, token string) (RegPayload, error) {
 	plain, err := DecryptToken(id, token)
 	if err != nil {
 		return RegPayload{}, err
@@ -127,6 +156,10 @@ func DecodeRegToken(id age.Identity, token string) (RegPayload, error) {
 	var p RegPayload
 	if err := json.Unmarshal([]byte(plain), &p); err != nil {
 		return RegPayload{}, fmt.Errorf("unmarshal payload: %w", err)
+	}
+	want := tokenMAC(secret, p.Handle, p.Issued)
+	if !hmac.Equal([]byte(want), []byte(p.MAC)) {
+		return RegPayload{}, fmt.Errorf("invalid token authentication")
 	}
 	return p, nil
 }
@@ -147,7 +180,7 @@ func (c *Client) registerLink(handle string) (string, error) {
 	if c.Recipient == nil {
 		return "", fmt.Errorf("no age recipient configured")
 	}
-	tok, err := EncodeRegToken(c.Recipient, RegPayload{Handle: handle, Issued: time.Now().Unix()})
+	tok, err := EncodeRegToken(c.Recipient, c.TokenSecret, RegPayload{Handle: handle, Issued: time.Now().Unix()})
 	if err != nil {
 		return "", err
 	}

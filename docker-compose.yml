@@ -37,6 +37,11 @@ services:
       # probe). `make up` writes a stable INTERNAL_TOKEN into .env so both services
       # agree. If empty, the endpoint is disabled (404) and the bot skips the check.
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
+      # Shared HMAC key authenticating the registration link token. `make up` writes
+      # a stable TOKEN_SECRET into .env so the bot (which signs) and web (which
+      # verifies) agree. If empty, links carry no real authenticity — production
+      # always has one generated.
+      TOKEN_SECRET: ${TOKEN_SECRET:-}
 
   # The Matrix bot: a separate long-lived process that listens for !register and
   # DMs the sender a registration link (or a "not open yet" notice when closed).
@@ -62,3 +67,6 @@ services:
       # Same shared secret as the web service, so the bot can call
       # GET /api/registered before issuing a link. Empty → the bot skips the check.
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
+      # Shared HMAC key authenticating the registration link token — must match the
+      # web service so the token the bot signs verifies there. `make up` writes it.
+      TOKEN_SECRET: ${TOKEN_SECRET:-}

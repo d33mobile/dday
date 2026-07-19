@@ -28,10 +28,14 @@ up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
 	@tok=$$(grep -E '^INTERNAL_TOKEN=' .env 2>/dev/null | head -n1 | cut -d= -f2-); \
 	 if [ -z "$$tok" ]; then tok=$$(openssl rand -hex 32); echo "generated new INTERNAL_TOKEN"; \
 	 else echo "reusing existing INTERNAL_TOKEN from .env"; fi; \
+	 sec=$$(grep -E '^TOKEN_SECRET=' .env 2>/dev/null | head -n1 | cut -d= -f2-); \
+	 if [ -z "$$sec" ]; then sec=$$(openssl rand -hex 32); echo "generated new TOKEN_SECRET"; \
+	 else echo "reusing existing TOKEN_SECRET from .env"; fi; \
 	 { printf 'AGE_KEY_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519)"; \
 	   printf 'AGE_PUB_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519.pub)"; \
-	   printf 'INTERNAL_TOKEN=%s\n' "$$tok"; } > .env
-	@echo "wrote .env (AGE_KEY_DATA + AGE_PUB_DATA + INTERNAL_TOKEN)"
+	   printf 'INTERNAL_TOKEN=%s\n' "$$tok"; \
+	   printf 'TOKEN_SECRET=%s\n' "$$sec"; } > .env
+	@echo "wrote .env (AGE_KEY_DATA + AGE_PUB_DATA + INTERNAL_TOKEN + TOKEN_SECRET)"
 	docker compose up -d --build
 
 down: ## Stop the compose stack
