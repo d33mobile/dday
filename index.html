@@ -167,7 +167,7 @@
       <div class="seats-note" id="seat-note">20 miejsc + 20 rezerwowych</div>
     </section>
 
-    <section class="howto">
+    <section class="howto" id="howto">
       <div class="howto-head">Jak się zapisać</div>
       <ol>
         <li>Napisz <code>!register</code> do bota <a href="https://matrix.to/#/@ddaybot:matrix.org" target="_blank" rel="noopener">@ddaybot:matrix.org</a> (albo na czacie <a href="https://matrix.to/#/%23hs-ldz-dday:matrix.org" target="_blank" rel="noopener">#hs-ldz-dday</a>).</li>
@@ -242,8 +242,11 @@
     // Prefer the API's open flag; fall back to the clock when it's absent.
     var isOpen = apiOpen===true || now>=REG_OPEN;
     // Once registration is open the "Zapisy od" tile is redundant — hide it.
+    // The "Jak się zapisać" steps only make sense once open — show them then.
     var regFrom=document.getElementById('regfrom');
     if(regFrom) regFrom.style.display=isOpen?'none':'';
+    var howto=document.getElementById('howto');
+    if(howto) howto.style.display=isOpen?'':'none';
     if(!isOpen){
       // Before registration opens — count down to REG_OPEN, CTA stays disabled.
       label.textContent='Zapisy startują za';
