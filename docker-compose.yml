@@ -1,0 +1,40 @@
+services:
+  dday:
+    build: .
+    image: dday:latest
+    container_name: dday
+    restart: unless-stopped
+    environment:
+      PORT: "3329"
+    # Direct host access for previewing (port 3329 is forwarded).
+    ports:
+      - "3329:3329"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      # Router (HTTPS)
+      traefik.http.routers.dday.rule: "Host(`dday.hs-ldz.pl`)"
+      traefik.http.routers.dday.entrypoints: "websecure"
+      traefik.http.routers.dday.tls: "true"
+      traefik.http.routers.dday.tls.certresolver: "letsencrypt"
+      traefik.http.routers.dday.service: "dday"
+      # Backend
+      traefik.http.services.dday.loadbalancer.server.port: "3329"
+      # Optional: redirect plain HTTP -> HTTPS
+      traefik.http.routers.dday-http.rule: "Host(`dday.hs-ldz.pl`)"
+      traefik.http.routers.dday-http.entrypoints: "web"
+      traefik.http.routers.dday-http.middlewares: "dday-https@docker"
+      traefik.http.middlewares.dday-https.redirectscheme.scheme: "https"
+    healthcheck:
+      test: ["CMD", "/dday", "-healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  # The Traefik instance is expected to already exist on this external network.
+  # Adjust the name if your Traefik uses a different one (e.g. "web").
+  traefik:
+    external: true

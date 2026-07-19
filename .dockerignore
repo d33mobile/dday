@@ -1,0 +1,7 @@
+.git
+.gitignore
+README.md
+Makefile
+docker-compose.yml
+dday
+*.out

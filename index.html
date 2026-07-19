@@ -50,10 +50,10 @@
   .live{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:1.4rem 1.25rem 1.5rem;margin-bottom:1.25rem}
   .count-label{font-size:.72rem;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);text-align:center;margin-bottom:1rem}
   .count-label b{color:var(--accent)}
-  .countdown{display:flex;gap:.55rem;justify-content:center;flex-wrap:wrap}
-  .unit{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:.9rem .55rem;min-width:84px;flex:0 0 auto;text-align:center}
-  .unit .num{font-size:clamp(1.9rem,6vw,2.7rem);font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
-  .unit .lbl{font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-top:.45rem}
+  .countdown{display:grid;grid-template-columns:repeat(4,1fr);gap:.55rem;max-width:440px;margin:0 auto}
+  .unit{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:.9rem .35rem;min-width:0;text-align:center}
+  .unit .num{font-size:clamp(1.6rem,8vw,2.7rem);font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
+  .unit .lbl{font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:.45rem}
   .cta{text-align:center;margin-top:1.25rem}
   .btn{
     display:inline-block;font-family:inherit;font-size:1rem;font-weight:700;letter-spacing:.04em;
@@ -79,7 +79,7 @@
         color:var(--accent2);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:.7rem 1.1rem;background:var(--bg2)}
   .chat:hover{border-color:var(--accent2)}
   .tags{margin-top:1rem;text-align:center;font-size:.75rem;color:var(--muted);opacity:.6;letter-spacing:.05em}
-  @media (max-width:480px){.unit{min-width:70px;padding:.8rem .4rem}}
+  @media (max-width:480px){.unit{padding:.75rem .3rem}}
 </style>
 </head>
 <body>
