@@ -64,6 +64,36 @@
   .btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 36px rgba(57,211,83,.32)}
   .btn-primary[disabled]{background:var(--card);color:var(--muted);border:1px solid var(--border);box-shadow:none;cursor:not-allowed;transform:none}
 
+  /* registered-seats counter — big, eye-catching, separate from countdown */
+  .seats{
+    background:linear-gradient(160deg,rgba(57,211,83,.08),rgba(45,212,191,.05));
+    border:1px solid var(--border);border-radius:16px;
+    padding:1.6rem 1.25rem 1.7rem;margin-bottom:1.25rem;text-align:center;
+  }
+  .seats-head{font-size:.72rem;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem}
+  .seats-num{
+    font-size:clamp(3.6rem,18vw,6.5rem);font-weight:900;line-height:.9;letter-spacing:-.04em;
+    font-variant-numeric:tabular-nums;
+    background:linear-gradient(120deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .seats.full .seats-num{
+    font-size:clamp(2.4rem,11vw,4rem);
+    background:linear-gradient(120deg,#f85149,#ff8a3d);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .seats-of{font-size:1.02rem;font-weight:700;color:var(--fg);margin-top:.4rem}
+  .seats-of b{color:var(--accent);font-size:1.15rem}
+  .seats.full .seats-of b{color:#f85149}
+  .bar{height:12px;border-radius:999px;background:var(--bg2);border:1px solid var(--border);
+       overflow:hidden;max-width:440px;margin:1.05rem auto .85rem}
+  .bar-fill{height:100%;width:0;border-radius:999px;
+       background:linear-gradient(90deg,var(--accent),var(--accent2));
+       transition:width .9s cubic-bezier(.22,1,.36,1)}
+  .seats.full .bar-fill{background:linear-gradient(90deg,#f85149,#ff8a3d)}
+  .seats-note{font-size:.78rem;letter-spacing:.06em;color:var(--muted)}
+  .seats.full .seats-note{color:#f85149;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+
   /* info grid — dense */
   .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.7rem;margin-bottom:1.25rem}
   .cell{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:.85rem .95rem}
@@ -79,6 +109,9 @@
         color:var(--accent2);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:.7rem 1.1rem;background:var(--bg2)}
   .chat:hover{border-color:var(--accent2)}
   .tags{margin-top:1rem;text-align:center;font-size:.75rem;color:var(--muted);opacity:.6;letter-spacing:.05em}
+  .legal{margin-top:.55rem;text-align:center;font-size:.8rem}
+  .legal a{color:var(--accent2);text-decoration:none;border-bottom:1px solid rgba(45,212,191,.35)}
+  .legal a:hover{color:var(--accent)}
   @media (max-width:480px){.unit{padding:.75rem .3rem}}
 </style>
 </head>
@@ -105,6 +138,14 @@
       </div>
     </section>
 
+    <section class="seats" id="seats">
+      <div class="seats-head">Zapisanych na D-Day</div>
+      <div class="seats-num" id="seat-count">—</div>
+      <div class="seats-of" id="seat-of"><b>—</b> / 20 miejsc</div>
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <div class="seats-note" id="seat-note">Liczba miejsc ograniczona — 20 uczestników</div>
+    </section>
+
     <section class="meta">
       <div class="cell"><div class="k">Kiedy</div><div class="v">Sob, 8 sierpnia<small>14:00 – 22:00</small></div></div>
       <div class="cell"><div class="k">Gdzie</div><div class="v">Hakierspejs<small>Zielona 30 LU3, Łódź</small></div></div>
@@ -118,6 +159,7 @@
     </div>
 
     <p class="tags">#dday · #unconference · #hakierspejs</p>
+    <p class="legal"><a href="/privacy">Polityka prywatności / RODO</a></p>
   </main>
 
 <script>
@@ -149,6 +191,51 @@
   }
   tick();
   setInterval(tick,1000);
+
+  // Registered-seats counter — pulls same-origin /api/count (allowed by CSP
+  // connect-src 'self'). On static hosting (e.g. GitHub Pages) the endpoint is
+  // absent: the block degrades to a "—" placeholder, never an error in the UI.
+  (function(){
+    var seats=document.getElementById('seats'),
+        numEl=document.getElementById('seat-count'),
+        ofEl=document.getElementById('seat-of'),
+        fill=document.getElementById('bar-fill'),
+        note=document.getElementById('seat-note');
+
+    function animateTo(target){
+      var dur=900,t0=null;
+      function step(ts){
+        if(t0===null)t0=ts;
+        var p=Math.min((ts-t0)/dur,1);
+        numEl.textContent=Math.round(target*(1-Math.pow(1-p,3)));
+        if(p<1)requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    fetch('/api/count',{headers:{'Accept':'application/json'}})
+      .then(function(r){if(!r.ok)throw 0;return r.json();})
+      .then(function(j){
+        var c=j.count|0, lim=(j.limit|0)||20;
+        ofEl.innerHTML='<b>'+c+'</b> / '+lim+' miejsc';
+        var pct=lim?Math.max(0,Math.min(100,c/lim*100)):0;
+        if(c>=lim){
+          seats.classList.add('full');
+          numEl.textContent='KOMPLET';
+          fill.style.width='100%';
+          note.textContent='Brak miejsc — limit '+lim+' osób wyczerpany';
+        }else{
+          animateTo(c);
+          fill.style.width=pct+'%';
+          note.textContent='Liczba miejsc ograniczona — '+lim+' uczestników';
+        }
+      })
+      .catch(function(){
+        numEl.textContent='—';
+        ofEl.innerHTML='<b>—</b> / 20 miejsc';
+        fill.style.width='0';
+      });
+  })();
 </script>
 </body>
 </html>
