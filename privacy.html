@@ -21,13 +21,16 @@
     background:linear-gradient(120deg,var(--accent),var(--accent2));
     -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
   }
-  .sub{font-size:.8rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:1.75rem}
-  h2{font-size:1.05rem;color:var(--accent2);margin:1.5rem 0 .4rem}
+  .sub{font-size:.8rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:.4rem}
+  .updated{font-size:.78rem;color:var(--muted);margin-bottom:1.75rem}
+  h2{font-size:1.05rem;color:var(--accent2);margin:1.6rem 0 .4rem}
   p,li{color:var(--fg);font-size:.95rem;margin-bottom:.55rem}
   ul{padding-left:1.4rem}
   a{color:var(--accent2);text-decoration:none}
   a:hover{text-decoration:underline}
+  strong{color:var(--fg)}
   .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:clamp(1.25rem,4vw,2rem)}
+  .note{background:rgba(45,212,191,.07);border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem;margin:.7rem 0}
   .back{display:inline-block;margin-top:1.75rem;font-size:.85rem;color:var(--muted)}
 </style>
 </head>
@@ -36,36 +39,96 @@
     <div class="card">
       <h1>Polityka prywatności</h1>
       <div class="sub">D-Day · Unconference · Hakierspejs Łódź</div>
+      <div class="updated">Ostatnia aktualizacja: 19 lipca 2026</div>
+
+      <p>Niniejsza polityka opisuje, jak przetwarzamy Twoje dane osobowe w związku z zapisem na
+        wydarzenie D-Day organizowane przez Hakierspejs Łódź.</p>
 
       <h2>Administrator danych</h2>
-      <p>Administratorem danych osobowych jest Hakierspejs Łódź, ul. Zielona 30 LU3, Łódź.</p>
+      <p>Administratorem danych osobowych jest <strong>Stowarzyszenie Hakierspejs Łódź</strong>,
+        ul. Zielona 30 lok. uż. 3, 90-604 Łódź.</p>
 
       <h2>Jakie dane przetwarzamy</h2>
       <ul>
         <li>adres e-mail,</li>
+        <li>identyfikator Matrix (handle) / nick,</li>
         <li>miejscowość,</li>
-        <li>nick / identyfikator Matrix (handle).</li>
+        <li>data i godzina zapisu.</li>
       </ul>
 
       <h2>Cel przetwarzania</h2>
-      <p>Dane wykorzystujemy wyłącznie w celu obsługi zapisów na wydarzenie D-Day (lista uczestników, kontakt organizacyjny).</p>
+      <p>Dane przetwarzamy w celu obsługi zapisów na wydarzenie D-Day — prowadzenia listy uczestników,
+        kontaktu organizacyjnego oraz organizacji wydarzenia. Miejscowość przetwarzamy dodatkowo w celach
+        organizacyjnych i statystycznych (oszacowanie zasięgu geograficznego i logistyki wydarzenia).</p>
 
       <h2>Podstawa prawna</h2>
-      <p>Podstawą przetwarzania jest Twoja zgoda, wyrażona poprzez dobrowolne wypełnienie formularza zapisu.</p>
+      <p>Podstawą przetwarzania jest art. 6 ust. 1 lit. b RODO — przetwarzanie jest niezbędne do podjęcia
+        działań na Twoje żądanie (przyjęcie zapisu) oraz do realizacji Twojego udziału w wydarzeniu.
+        Wszystkie zbierane pola (adres e-mail, identyfikator Matrix, miejscowość) są niezbędne do dokonania
+        i obsługi zapisu — nie ma pól opcjonalnych ani przetwarzania na podstawie zgody dla danych rejestracyjnych.</p>
 
-      <h2>Okres przechowywania</h2>
-      <p>Dane przechowujemy do zakończenia wydarzenia lub do momentu wycofania przez Ciebie zgody — w zależności od tego, co nastąpi wcześniej.</p>
+      <h2>Dobrowolność podania danych</h2>
+      <p>Podanie danych jest dobrowolne, ale niezbędne do dokonania zapisu — bez ich podania nie jest możliwe
+        zapisanie się na wydarzenie.</p>
 
-      <h2>Twoje prawa</h2>
+      <h2>Odbiorcy danych</h2>
+      <p>Dane zapisu utrzymujemy na własnej infrastrukturze (baza zapisów). Korzystamy z zewnętrznych dostawców:</p>
       <ul>
-        <li>prawo dostępu do swoich danych,</li>
-        <li>prawo do sprostowania danych,</li>
-        <li>prawo do usunięcia danych,</li>
-        <li>prawo do wycofania zgody w dowolnym momencie.</li>
+        <li>komunikator Matrix — The Matrix.org Foundation C.I.C. — w zakresie dostarczenia linku
+          rejestracyjnego i kontaktu z Tobą,</li>
+        <li>poczta e-mail — dostawca usługi Google Workspace oraz jego podprocesorzy, zgodnie z zawartą
+          umową powierzenia — jeżeli kontaktujemy się z Tobą drogą mailową.</li>
       </ul>
 
+      <h2>Przekazywanie danych poza EOG</h2>
+      <p>W zakresie, w jakim dane trafiają do Google LLC w Stanach Zjednoczonych, podstawą przekazania jest
+        decyzja wykonawcza Komisji Europejskiej dotycząca EU–US Data Privacy Framework (dopóki Google LLC
+        pozostaje aktywnym uczestnikiem tego programu); w pozostałych przypadkach transferów Google może
+        stosować standardowe klauzule umowne.</p>
+      <p>Matrix jest siecią federacyjną — dane mogą trafiać na homeservery uczestników pokoju, także poza EOG,
+        a pokój może być połączony mostkiem (bridge) z inną usługą. Serwer matrix.org działa w Wielkiej
+        Brytanii, objętej decyzją Komisji Europejskiej stwierdzającą odpowiedni stopień ochrony danych.</p>
+
+      <h2>Komunikacja przez Matrix</h2>
+      <p>Jeżeli kontaktujesz się z nami przez Matrix, treść wiadomości, Twój identyfikator Matrix, nazwa
+        wyświetlana oraz metadane techniczne mogą być przetwarzane przez operatorów homeserverów uczestniczących
+        w pokoju. Ze względu na federację i mostki dane te mogą zostać przekazane poza EOG.</p>
+      <div class="note">
+        <p><strong>Żądań dotyczących Twoich danych osobowych nie wysyłaj na publicznym kanale Matrix</strong>
+          — w tym celu napisz na <a href="mailto:kontakt@hakierspejs.pl">kontakt@hakierspejs.pl</a>.</p>
+      </div>
+
+      <h2>Okres przechowywania</h2>
+      <!-- Termin 30 dni jest wartością domyślną do potwierdzenia przez organizatora wydarzenia. -->
+      <p>Dane zapisu przechowujemy do zakończenia wydarzenia; usuwamy je najpóźniej w terminie 30 dni po
+        zakończeniu wydarzenia — albo wcześniej, jeżeli zgłosisz żądanie usunięcia danych.</p>
+
+      <h2>Twoje prawa</h2>
+      <p>Przysługuje Ci prawo do:</p>
+      <ul>
+        <li>dostępu do swoich danych,</li>
+        <li>sprostowania danych,</li>
+        <li>usunięcia danych,</li>
+        <li>ograniczenia przetwarzania,</li>
+        <li>przenoszenia danych,</li>
+        <li>wniesienia skargi do Prezesa Urzędu Ochrony Danych Osobowych
+          (ul. Stanisława Moniuszki 1A, 00-014 Warszawa).</li>
+      </ul>
+      <p>W zakresie, w jakim przetwarzanie odbywa się na podstawie zgody, przysługuje Ci również prawo do
+        wycofania zgody w dowolnym momencie (wycofanie zgody nie wpływa na zgodność z prawem przetwarzania
+        dokonanego przed jej wycofaniem).</p>
+
+      <h2>Rezygnacja i usunięcie danych</h2>
+      <p>Aby zrezygnować z udziału i usunąć swoje dane, napisz na
+        <a href="mailto:kontakt@hakierspejs.pl">kontakt@hakierspejs.pl</a> — usuniemy Twój rekord i anulujemy zapis.</p>
+
+      <h2>Zautomatyzowane podejmowanie decyzji</h2>
+      <p>Nie podejmujemy wobec Ciebie decyzji w sposób wyłącznie zautomatyzowany i nie profilujemy Twoich danych.</p>
+
       <h2>Kontakt</h2>
-      <p>W sprawach dotyczących danych osobowych skontaktuj się z nami przez czat Matrix
+      <p>W sprawach dotyczących danych osobowych skontaktuj się z nami mailowo:
+        <a href="mailto:kontakt@hakierspejs.pl">kontakt@hakierspejs.pl</a>. W sprawach organizacyjnych dostępny
+        jest również czat Matrix
         <a href="https://matrix.to/#/%23hs-ldz-dday:matrix.org" target="_blank" rel="noopener">#hs-ldz-dday</a>.</p>
 
       <a class="back" href="/">← powrót na stronę główną</a>

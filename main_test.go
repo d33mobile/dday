@@ -791,7 +791,10 @@ func TestPrivacyPage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("privacy status = %d; want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Administratorem danych") {
-		t.Errorf("privacy body missing RODO content")
+	if !strings.Contains(rec.Body.String(), "Stowarzyszenie Hakierspejs Łódź") {
+		t.Errorf("privacy body missing administrator name")
+	}
+	if !strings.Contains(rec.Body.String(), "art. 6 ust. 1 lit. b RODO") {
+		t.Errorf("privacy body missing legal basis")
 	}
 }
