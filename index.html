@@ -94,6 +94,21 @@
   .seats-note{font-size:.78rem;letter-spacing:.06em;color:var(--muted)}
   .seats.full .seats-note{color:#f85149;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
 
+  /* how-to-register instructions — visible before and after registration opens */
+  .howto{background:var(--card);border:1px solid var(--border);border-radius:16px;
+         padding:1.25rem 1.35rem;margin-bottom:1.25rem}
+  .howto-head{font-size:.72rem;letter-spacing:.24em;text-transform:uppercase;color:var(--accent);margin-bottom:.7rem}
+  .howto ol{list-style:none;counter-reset:step;display:grid;gap:.6rem}
+  .howto li{counter-increment:step;position:relative;padding-left:2.1rem;font-size:.9rem;line-height:1.5;color:var(--fg)}
+  .howto li::before{content:counter(step);position:absolute;left:0;top:0;
+        width:1.5rem;height:1.5rem;border-radius:50%;display:flex;align-items:center;justify-content:center;
+        font-size:.78rem;font-weight:700;color:#04140a;background:linear-gradient(120deg,var(--accent),var(--accent2))}
+  .howto code{font-family:inherit;font-weight:700;color:var(--accent);background:var(--bg2);
+        border:1px solid var(--border);border-radius:6px;padding:.05rem .4rem}
+  .howto a{color:var(--accent2);text-decoration:none;border-bottom:1px solid rgba(45,212,191,.35)}
+  .howto a:hover{color:var(--accent)}
+  .howto .limit{margin-top:.75rem;font-size:.78rem;letter-spacing:.06em;color:var(--muted)}
+
   /* info grid — dense */
   .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.7rem;margin-bottom:1.25rem}
   .cell{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:.85rem .95rem}
@@ -146,6 +161,16 @@
       <div class="seats-note" id="seat-note">Liczba miejsc ograniczona — 20 uczestników</div>
     </section>
 
+    <section class="howto">
+      <div class="howto-head">Jak się zapisać</div>
+      <ol>
+        <li>Napisz <code>!register</code> do bota <a href="https://matrix.to/#/@ddaybot:matrix.org" target="_blank" rel="noopener">@ddaybot:matrix.org</a> (albo na czacie <a href="https://matrix.to/#/%23hs-ldz-dday:matrix.org" target="_blank" rel="noopener">#hs-ldz-dday</a>).</li>
+        <li>Bot odeśle Ci prywatny link do formularza (miejscowość + e-mail).</li>
+        <li>Wypełnij formularz — dostaniesz swój numer uczestnika.</li>
+      </ol>
+      <p class="limit">Liczba miejsc ograniczona do 20. Zapisy startują w niedzielę 26 lipca, 15:00 czasu PL.</p>
+    </section>
+
     <section class="meta">
       <div class="cell"><div class="k">Kiedy</div><div class="v">Sob, 8 sierpnia<small>14:00 – 22:00</small></div></div>
       <div class="cell"><div class="k">Gdzie</div><div class="v">Hakierspejs<small>Zielona 30 LU3, Łódź</small></div></div>
@@ -175,10 +200,12 @@
   function open(){
     label.innerHTML='<b>Zapisy są otwarte</b>';
     document.getElementById('countdown').style.display='none';
-    btn.textContent='Zapisz się';
+    btn.textContent='Zapisz się przez Matrix';
+    btn.setAttribute('href','https://matrix.to/#/@ddaybot:matrix.org');
+    btn.setAttribute('target','_blank');
+    btn.setAttribute('rel','noopener');
     btn.removeAttribute('disabled');
     btn.removeAttribute('aria-disabled');
-    // TODO: podmień href na prawdziwy link do formularza zapisów
   }
 
   function tick(){
