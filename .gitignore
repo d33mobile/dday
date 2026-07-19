@@ -1,2 +1,5 @@
 /dday
 *.out
+
+# Secrets — never commit
+matrix.env

@@ -1,7 +1,8 @@
-IMAGE ?= dday:latest
-PORT  ?= 3329
+IMAGE       ?= dday:latest
+PORT        ?= 3329
+MATRIX_ENV  ?= matrix.env
 
-.PHONY: help run dev build docker up down logs fmt vet tidy
+.PHONY: help run dev build docker up down logs fmt vet tidy matrix-hello matrix-send
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -36,3 +37,13 @@ vet: ## Run go vet
 
 tidy: ## Tidy modules
 	go mod tidy
+
+$(MATRIX_ENV):
+	@echo "ERROR: '$(MATRIX_ENV)' not found. Copy matrix.env.example -> $(MATRIX_ENV) and fill in MATRIX_PASSWORD." >&2
+	@exit 1
+
+matrix-hello: $(MATRIX_ENV) ## Send "hello world" to the Matrix room
+	@MATRIX_ENV=$(MATRIX_ENV) ./scripts/send-matrix.sh
+
+matrix-send: $(MATRIX_ENV) ## Send a custom message: make matrix-send MSG="..."
+	@MATRIX_ENV=$(MATRIX_ENV) ./scripts/send-matrix.sh "$(MSG)"
