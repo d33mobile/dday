@@ -181,7 +181,7 @@
       <div class="cell"><div class="k">Kiedy</div><div class="v">Sob, 8 sierpnia<small>14:00 – 22:00</small></div></div>
       <div class="cell"><div class="k">Gdzie</div><div class="v">Hakierspejs<small>Zielona 30 LU3, Łódź</small></div></div>
       <div class="cell"><div class="k">Wstęp</div><div class="v">Darmowy<small>zapisy obowiązkowe</small></div></div>
-      <div class="cell"><div class="k">Zapisy od</div><div class="v">Nd 26 lipca<small>15:00 czasu PL</small></div></div>
+      <div class="cell" id="regfrom"><div class="k">Zapisy od</div><div class="v">Nd 26 lipca<small>15:00 czasu PL</small></div></div>
     </section>
 
     <div class="foot">
@@ -241,6 +241,9 @@
     var now=Date.now();
     // Prefer the API's open flag; fall back to the clock when it's absent.
     var isOpen = apiOpen===true || now>=REG_OPEN;
+    // Once registration is open the "Zapisy od" tile is redundant — hide it.
+    var regFrom=document.getElementById('regfrom');
+    if(regFrom) regFrom.style.display=isOpen?'none':'';
     if(!isOpen){
       // Before registration opens — count down to REG_OPEN, CTA stays disabled.
       label.textContent='Zapisy startują za';
