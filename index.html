@@ -247,6 +247,9 @@
     if(regFrom) regFrom.style.display=isOpen?'none':'';
     var howto=document.getElementById('howto');
     if(howto) howto.style.display=isOpen?'':'none';
+    // No signups yet before opening — hide the registered counter too.
+    var seats=document.getElementById('seats');
+    if(seats) seats.style.display=isOpen?'':'none';
     if(!isOpen){
       // Before registration opens — count down to REG_OPEN, CTA stays disabled.
       label.textContent='Zapisy startują za';
