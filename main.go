@@ -9,16 +9,21 @@ package main
 
 import (
 	"embed"
+	"encoding/base64"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	_ "time/tzdata" // embed the tz database so Europe/Warsaw resolves on distroless
 
 	"github.com/d33mobile/dday/internal/matrixbot"
 	"github.com/d33mobile/dday/internal/store"
+
+	"filippo.io/age"
 )
 
 //go:embed index.html privacy.html
@@ -48,16 +53,23 @@ func main() {
 		files = http.FS(sub)
 	}
 
-	identity, err := matrixbot.LoadIdentity(env("AGE_KEY", "config/dday_ed25519"))
+	// Registration needs the private key and the database. If either is
+	// unavailable, don't take the whole site down — keep serving the landing
+	// page (and /privacy, /healthz) and let only the registration endpoints
+	// degrade to 503 until they're configured.
+	identity, err := loadIdentity()
 	if err != nil {
-		log.Fatalf("load age identity: %v", err)
+		log.Printf("WARNING: registration disabled — age key: %v", err)
+		identity = nil
 	}
 
 	st, err := store.Open(env("DB_PATH", "./dday.db"))
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		log.Printf("WARNING: registration disabled — store: %v", err)
+		st = nil
+	} else {
+		defer st.Close()
 	}
-	defer st.Close()
 
 	handler := newMux(deps{
 		store:     st,
@@ -80,6 +92,21 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// loadIdentity resolves the age identity used to decrypt registration tokens.
+// AGE_KEY_DATA (base64-encoded private key) takes precedence over the AGE_KEY
+// file path — passing the key by value avoids container file-permission issues
+// (a mounted 0600 key is unreadable by the distroless nonroot user).
+func loadIdentity() (age.Identity, error) {
+	if b64 := strings.TrimSpace(os.Getenv("AGE_KEY_DATA")); b64 != "" {
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, fmt.Errorf("AGE_KEY_DATA base64: %w", err)
+		}
+		return matrixbot.ParseIdentity(data)
+	}
+	return matrixbot.LoadIdentity(env("AGE_KEY", "config/dday_ed25519"))
 }
 
 // openMoment is the instant registration opens: 2026-07-26 15:00 Europe/Warsaw.

@@ -22,6 +22,9 @@ docker: ## Build the Docker image
 	docker build -t $(IMAGE) .
 
 up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
+	@test -f config/dday_ed25519 || { echo "config/dday_ed25519 missing — run: make keys"; exit 1; }
+	@printf 'AGE_KEY_DATA=%s\n' "$$(base64 -w0 config/dday_ed25519)" > .env
+	@echo "wrote .env (AGE_KEY_DATA from config/dday_ed25519)"
 	docker compose up -d --build
 
 down: ## Stop the compose stack

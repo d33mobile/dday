@@ -6,6 +6,7 @@ docker-compose.yml
 
 # Secrets — never bake into the image
 matrix.env
+.env
 config/*_ed25519
 config/*_ed25519.pub
 

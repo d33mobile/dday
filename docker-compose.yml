@@ -2,14 +2,6 @@ networks:
   traefik:
     external: true
 
-# The registration key lives in a compose secret. config/dday_ed25519 must exist
-# (run `make keys`) and is gitignored — it is never committed nor baked into the
-# image. Compose mounts it read-only at /run/secrets/age_key (mode 0444), so the
-# distroless nonroot process (uid 65532) can read it without a host-side chown.
-secrets:
-  age_key:
-    file: ./config/dday_ed25519
-
 volumes:
   # Persists the SQLite DB across restarts/redeploys. The image ships /data owned
   # by nonroot (65532), so this fresh named volume inherits writable ownership.
@@ -27,13 +19,15 @@ services:
       - "3329"
     restart: unless-stopped
     build: .
-    secrets:
-      - age_key
     volumes:
       - dday-data:/data
     environment:
-      # Private age key (decrypts registration tokens); see secrets: above.
-      AGE_KEY: /run/secrets/age_key
+      # Private age key (decrypts registration tokens) passed BY VALUE as base64,
+      # not as a mounted file — a 0600 key file is unreadable by the distroless
+      # nonroot user (uid 65532), which crash-loops the container. `make up`
+      # writes AGE_KEY_DATA into .env (gitignored) from config/dday_ed25519.
+      # If unset, the landing still serves and only registration returns 503.
+      AGE_KEY_DATA: ${AGE_KEY_DATA:-}
       # SQLite DB path on the persistent volume.
       DB_PATH: /data/dday.db
       # Force registration open NOW. Remove this line in production so the built-in

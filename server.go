@@ -69,8 +69,18 @@ func newMux(d deps) http.Handler {
 	return secure(mux)
 }
 
+// ready reports whether registration can run (key loaded and DB open). When it
+// is false the site still serves the landing page; only registration degrades.
+func (d deps) ready() bool { return d.store != nil && d.identity != nil }
+
 // handleRegister dispatches GET (render form) and POST (process submission).
 func (d deps) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !d.ready() {
+		d.renderMessage(w, http.StatusServiceUnavailable, "Rejestracja chwilowo niedostępna",
+			"Zapisy są tymczasowo niedostępne.",
+			"Spróbuj ponownie za chwilę lub napisz na czacie Matrix.")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		d.registerGet(w, r)
@@ -168,10 +178,14 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d deps) handleCount(w http.ResponseWriter, _ *http.Request) {
-	count, err := d.store.Count()
-	if err != nil {
-		d.serverError(w, "count", err)
-		return
+	count := 0
+	if d.store != nil {
+		var err error
+		count, err = d.store.Count()
+		if err != nil {
+			d.serverError(w, "count", err)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

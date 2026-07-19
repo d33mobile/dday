@@ -261,6 +261,57 @@ func TestRegisterInvalidEmail(t *testing.T) {
 	}
 }
 
+// TestRegistrationDisabled verifies that when the age key / store are missing
+// the site still serves the landing (and privacy), and registration degrades to
+// 503 instead of crashing the server.
+func TestRegistrationDisabled(t *testing.T) {
+	sub, err := fs.Sub(embedded, ".")
+	if err != nil {
+		t.Fatalf("embed sub: %v", err)
+	}
+	h := newMux(deps{
+		store:     nil,
+		identity:  nil,
+		seatLimit: 20,
+		isOpen:    func() bool { return true },
+		files:     http.FS(sub),
+	})
+
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+
+	if rec := do(http.MethodGet, "/"); rec.Code != http.StatusOK {
+		t.Errorf("GET / = %d; want 200 (landing must always serve)", rec.Code)
+	}
+	if rec := do(http.MethodGet, "/privacy"); rec.Code != http.StatusOK {
+		t.Errorf("GET /privacy = %d; want 200", rec.Code)
+	}
+	if rec := do(http.MethodGet, "/healthz"); rec.Code != http.StatusOK {
+		t.Errorf("GET /healthz = %d; want 200", rec.Code)
+	}
+	if rec := do(http.MethodGet, "/register?t=x"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("GET /register = %d; want 503", rec.Code)
+	}
+	// /api/count still answers, reporting zero.
+	crec := do(http.MethodGet, "/api/count")
+	if crec.Code != http.StatusOK {
+		t.Fatalf("GET /api/count = %d; want 200", crec.Code)
+	}
+	var got struct {
+		Count int `json:"count"`
+		Limit int `json:"limit"`
+	}
+	if err := json.Unmarshal(crec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode count: %v", err)
+	}
+	if got.Count != 0 || got.Limit != 20 {
+		t.Errorf("api/count = %+v; want count 0 limit 20", got)
+	}
+}
+
 func TestPrivacyPage(t *testing.T) {
 	e := newTestEnv(t, true, 20)
 	rec := e.get(t, "/privacy")

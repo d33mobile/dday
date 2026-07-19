@@ -51,9 +51,20 @@ func LoadIdentity(path string) (age.Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := agessh.ParseIdentity(data)
+	id, err := ParseIdentity(data)
 	if err != nil {
-		return nil, fmt.Errorf("parse identity %s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return id, nil
+}
+
+// ParseIdentity parses SSH ed25519 private key bytes into an age identity. It
+// lets callers supply the key from somewhere other than a file (e.g. an env
+// var), sidestepping file-permission issues in containers.
+func ParseIdentity(pemBytes []byte) (age.Identity, error) {
+	id, err := agessh.ParseIdentity(pemBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse identity: %w", err)
 	}
 	return id, nil
 }
