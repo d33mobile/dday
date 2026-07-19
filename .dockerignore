@@ -3,5 +3,13 @@
 README.md
 Makefile
 docker-compose.yml
+
+# Secrets — never bake into the image
+matrix.env
+config/*_ed25519
+config/*_ed25519.pub
+
+# Build artifacts / local db / junk
 dday
 *.out
+*.db
