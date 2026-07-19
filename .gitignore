@@ -3,3 +3,5 @@
 
 # Secrets — never commit
 matrix.env
+/config/*_ed25519
+/config/*_ed25519.pub

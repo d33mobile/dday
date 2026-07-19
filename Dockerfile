@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
-# Cache modules first (no deps yet, but keeps the layer stable).
-COPY go.mod ./
+# Cache modules first.
+COPY go.mod go.sum ./
 RUN go mod download
 COPY main.go index.html ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /dday .
