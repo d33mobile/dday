@@ -18,9 +18,9 @@ import (
 	"os"
 	"strings"
 	"time"
-	_ "time/tzdata" // embed the tz database so Europe/Warsaw resolves on distroless
 
 	"github.com/d33mobile/dday/internal/matrixbot"
+	"github.com/d33mobile/dday/internal/regwindow"
 	"github.com/d33mobile/dday/internal/store"
 
 	"filippo.io/age"
@@ -75,7 +75,7 @@ func main() {
 		store:     st,
 		identity:  identity,
 		seatLimit: seatLimit,
-		isOpen:    registrationOpen,
+		isOpen:    regwindow.Open,
 		files:     files,
 	})
 
@@ -107,30 +107,6 @@ func loadIdentity() (age.Identity, error) {
 		return matrixbot.ParseIdentity(data)
 	}
 	return matrixbot.LoadIdentity(env("AGE_KEY", "config/dday_ed25519"))
-}
-
-// openMoment is the instant registration opens: 2026-07-26 15:00 Europe/Warsaw.
-var openMoment = time.Date(2026, 7, 26, 15, 0, 0, 0, warsaw())
-
-// registrationOpen is the default time gate. REGISTRATION_OPEN=1/true forces it
-// open; otherwise it opens once we pass openMoment in the Warsaw timezone.
-func registrationOpen() bool {
-	switch os.Getenv("REGISTRATION_OPEN") {
-	case "1", "true", "TRUE", "yes":
-		return true
-	}
-	return !time.Now().Before(openMoment)
-}
-
-// warsaw returns the Europe/Warsaw location, falling back to a fixed +02:00
-// (CEST) zone if the tz database is unavailable. time/tzdata is imported so the
-// lookup succeeds even on distroless images without system tzdata.
-func warsaw() *time.Location {
-	loc, err := time.LoadLocation("Europe/Warsaw")
-	if err != nil {
-		return time.FixedZone("CEST", 2*60*60)
-	}
-	return loc
 }
 
 // secure adds baseline security headers to every response.

@@ -29,6 +29,7 @@ type Client struct {
 	HTTP      *http.Client  // HTTP client
 	Recipient age.Recipient // age recipient used to encrypt the link token
 	LinkBase  string        // registration URL the token is appended to
+	IsOpen    func() bool   // registration time gate; nil means always open
 }
 
 // New returns a Client for the given homeserver.
@@ -157,9 +158,24 @@ func isRegisterCmd(body string) bool {
 	return len(f) > 0 && strings.EqualFold(f[0], "!register")
 }
 
-// HandleRegister opens a DM with user and sends them a fresh registration
-// link. It returns the created room id.
+// HandleRegister opens a DM with user. When registration is open it sends a
+// fresh registration link; when it is closed (per c.IsOpen) it instead sends a
+// "not open yet" notice with the start time and no link. It returns the created
+// room id.
 func (c *Client) HandleRegister(user string) (string, error) {
+	if c.IsOpen != nil && !c.IsOpen() {
+		roomID, err := c.createDM(user)
+		if err != nil {
+			return "", fmt.Errorf("create dm: %w", err)
+		}
+		plain := "Zapisy na D-Day nie są jeszcze otwarte. Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego). Napisz !register ponownie po tym terminie."
+		html := "Zapisy na <b>D-Day</b> nie są jeszcze otwarte.<br>Start: niedziela 26 lipca 2026, 15:00 (czasu polskiego).<br>Napisz <code>!register</code> ponownie po tym terminie."
+		if err := c.sendHTML(roomID, plain, html); err != nil {
+			return roomID, fmt.Errorf("send: %w", err)
+		}
+		return roomID, nil
+	}
+
 	link, err := c.registerLink(user)
 	if err != nil {
 		return "", fmt.Errorf("build link: %w", err)

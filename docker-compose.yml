@@ -33,3 +33,25 @@ services:
       # Force registration open NOW. Remove this line in production so the built-in
       # time gate applies (opens 2026-07-26 15:00 Europe/Warsaw).
       REGISTRATION_OPEN: "1"
+
+  # The Matrix bot: a separate long-lived process that listens for !register and
+  # DMs the sender a registration link (or a "not open yet" notice when closed).
+  # It reuses the same image but overrides the entrypoint to run /bot.
+  bot:
+    # No `networks:` — the bot must reach matrix.org, so it stays on the default
+    # project network (egress NAT). The `traefik` external network is inbound-only
+    # for the web service and would not give the bot internet access.
+    build: .
+    entrypoint: ["/bot"]
+    restart: unless-stopped
+    # matrix.env (gitignored) supplies MATRIX_HOMESERVER/USER/PASSWORD + REGISTER_URL.
+    env_file: matrix.env
+    environment:
+      # matrix.env also sets AGE_PUB=config/... — a host path that does not exist
+      # inside the image. Override with the public key passed BY VALUE as base64;
+      # the bot prefers AGE_PUB_DATA over AGE_PUB. `make up` writes it into .env.
+      AGE_PUB_DATA: ${AGE_PUB_DATA:-}
+      # Same time gate as the web service — forces registration open NOW.
+      # Remove REGISTRATION_OPEN from BOTH services in production so the built-in
+      # time gate applies (opens 2026-07-26 15:00 Europe/Warsaw).
+      REGISTRATION_OPEN: "1"

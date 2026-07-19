@@ -37,11 +37,18 @@ func LoadRecipient(path string) (age.Recipient, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := agessh.ParseRecipient(strings.TrimSpace(string(data)))
+	r, err := ParseRecipient(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse recipient %s: %w", path, err)
 	}
 	return r, nil
+}
+
+// ParseRecipient parses an SSH ed25519 public key (authorized_keys line) into an
+// age recipient. It lets callers supply the key from somewhere other than a file
+// (e.g. an env var), sidestepping file-permission issues in containers.
+func ParseRecipient(s string) (age.Recipient, error) {
+	return agessh.ParseRecipient(strings.TrimSpace(s))
 }
 
 // LoadIdentity reads an SSH ed25519 private key file and returns it as an age

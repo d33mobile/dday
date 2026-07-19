@@ -8,7 +8,8 @@
 //	MATRIX_HOMESERVER   e.g. https://matrix.org
 //	MATRIX_USER         e.g. @ddaybot:matrix.org
 //	MATRIX_PASSWORD     bot password
-//	AGE_PUB             SSH ed25519 public key file (recipient)
+//	AGE_PUB_DATA        base64 of the SSH ed25519 public key (recipient); preferred
+//	AGE_PUB             SSH ed25519 public key file (recipient); fallback
 //	REGISTER_URL        base link the token is appended to
 //
 // Note: the bot reads plaintext rooms only (no E2E encryption), so keep the
@@ -17,22 +18,27 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"filippo.io/age"
+
 	"github.com/d33mobile/dday/internal/matrixbot"
+	"github.com/d33mobile/dday/internal/regwindow"
 )
 
 func main() {
 	hs := mustEnv("MATRIX_HOMESERVER")
 	user := mustEnv("MATRIX_USER")
 	pass := mustEnv("MATRIX_PASSWORD")
-	pubPath := mustEnv("AGE_PUB")
 	registerURL := env("REGISTER_URL", "https://dday.hs-ldz.pl/")
 
-	recipient, err := matrixbot.LoadRecipient(pubPath)
+	recipient, err := loadRecipient()
 	if err != nil {
 		log.Fatalf("load recipient: %v", err)
 	}
@@ -40,6 +46,7 @@ func main() {
 	c := matrixbot.New(hs)
 	c.Recipient = recipient
 	c.LinkBase = registerURL
+	c.IsOpen = regwindow.Open
 
 	if err := c.Login(user, pass); err != nil {
 		log.Fatalf("login: %v", err)
@@ -52,6 +59,22 @@ func main() {
 	if err := c.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// loadRecipient resolves the age recipient (SSH ed25519 public key) used to
+// encrypt registration link tokens. AGE_PUB_DATA (base64 of the public key)
+// takes precedence over the AGE_PUB file path — passing the key by value avoids
+// container config-mount issues (matrix.env sets AGE_PUB to a host path that
+// does not exist inside the image).
+func loadRecipient() (age.Recipient, error) {
+	if b64 := strings.TrimSpace(os.Getenv("AGE_PUB_DATA")); b64 != "" {
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, fmt.Errorf("AGE_PUB_DATA base64: %w", err)
+		}
+		return matrixbot.ParseRecipient(string(data))
+	}
+	return matrixbot.LoadRecipient(mustEnv("AGE_PUB"))
 }
 
 func env(k, fallback string) string {
