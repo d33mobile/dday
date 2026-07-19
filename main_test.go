@@ -312,6 +312,86 @@ func TestRegistrationDisabled(t *testing.T) {
 	}
 }
 
+// TestRegisterFlowBotToWeb is the full cross-component e2e: the real bot
+// (matrixbot.Client.HandleRegister) encrypts a link to the same key the real
+// web handler decrypts, and the link the bot ACTUALLY emits is driven through
+// GET+POST /register to a stored, numbered registration. It closes the gap
+// between the bot-side and web-side tests, which otherwise only meet at the
+// token format.
+func TestRegisterFlowBotToWeb(t *testing.T) {
+	// Web side: real handler + store, with an ephemeral keypair.
+	e := newTestEnv(t, true, 20)
+
+	// Mock Matrix homeserver to receive the bot's createRoom + send.
+	sent := make(chan string, 1)
+	mm := http.NewServeMux()
+	mm.HandleFunc("/_matrix/client/v3/createRoom", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"room_id":"!dm:mock"}`))
+	})
+	mm.HandleFunc("/_matrix/client/v3/rooms/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/send/") {
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sent <- body.Body
+		}
+		_, _ = w.Write([]byte(`{"event_id":"$e"}`))
+	})
+	ms := httptest.NewServer(mm)
+	defer ms.Close()
+
+	// Bot side: real Client encrypting to the SAME recipient the web decrypts.
+	bot := matrixbot.New(ms.URL)
+	bot.Token = "tok"
+	bot.Recipient = e.recipient
+	bot.LinkBase = "https://dday.hs-ldz.pl/register"
+
+	if _, err := bot.HandleRegister("@alice:hs.org"); err != nil {
+		t.Fatalf("bot HandleRegister: %v", err)
+	}
+
+	var msg string
+	select {
+	case msg = <-sent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("bot did not send a message")
+	}
+
+	// Pull the token out of the link the bot actually emitted.
+	fields := strings.Fields(msg)
+	if len(fields) == 0 {
+		t.Fatalf("empty bot message")
+	}
+	link := fields[len(fields)-1]
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatalf("parse bot link %q: %v", link, err)
+	}
+	token := u.Query().Get("t")
+	if token == "" {
+		t.Fatalf("no token in bot link %q", link)
+	}
+
+	// GET with the bot's token renders the form pre-filled with the nick.
+	grec := e.get(t, "/register?t="+url.QueryEscape(token))
+	if grec.Code != http.StatusOK || !strings.Contains(grec.Body.String(), "alice") {
+		t.Fatalf("GET with bot token: code=%d, missing nick 'alice'", grec.Code)
+	}
+
+	// POST the bot's token registers the participant.
+	prec := e.post(t, url.Values{"t": {token}, "city": {"Łódź"}, "email": {"alice@example.com"}})
+	if prec.Code != http.StatusOK {
+		t.Fatalf("register status = %d", prec.Code)
+	}
+	if !strings.Contains(prec.Body.String(), "#1") {
+		t.Errorf("expected participant number #1, body: %s", prec.Body.String())
+	}
+	if n, _ := e.store.Count(); n != 1 {
+		t.Fatalf("count = %d; want 1", n)
+	}
+}
+
 func TestPrivacyPage(t *testing.T) {
 	e := newTestEnv(t, true, 20)
 	rec := e.get(t, "/privacy")
