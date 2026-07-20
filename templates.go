@@ -2,69 +2,14 @@ package main
 
 import "html/template"
 
-// Shared CSS for the server-rendered pages, matching the landing page's dark
-// theme. Kept inline so the pages need no external assets (CSP default-src
-// 'self' with style-src 'unsafe-inline').
-const pageCSS = `
-:root{--bg:#0a0e14;--bg2:#0d1420;--fg:#e6edf3;--muted:#8b98a5;
-  --accent:#39d353;--accent2:#2dd4bf;--card:rgba(255,255,255,.04);--border:rgba(255,255,255,.09)}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Courier New',ui-monospace,SFMono-Regular,Menlo,monospace;
-  background:radial-gradient(1100px 700px at 50% -15%,#12203a 0%,var(--bg) 60%);
-  color:var(--fg);min-height:100vh;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-.wrap{max-width:560px;margin:0 auto;padding:clamp(1.5rem,5vw,3rem) 1.25rem 2.5rem}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:clamp(1.35rem,4vw,2.1rem)}
-h1{font-size:clamp(1.6rem,5vw,2.2rem);font-weight:900;letter-spacing:-.03em;line-height:1.1;margin-bottom:.35rem;
-  background:linear-gradient(120deg,var(--accent),var(--accent2));
-  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.sub{font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:1.5rem}
-p{margin-bottom:.8rem;font-size:.95rem}
-.big{font-size:clamp(2.4rem,12vw,3.6rem);font-weight:900;line-height:1;color:var(--accent);
-  font-variant-numeric:tabular-nums;margin:.6rem 0 1rem;text-align:center}
-label{display:block;font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:1rem 0 .35rem}
-input{width:100%;font-family:inherit;font-size:1rem;color:var(--fg);background:var(--bg2);
-  border:1px solid var(--border);border-radius:10px;padding:.75rem .85rem}
-input:focus{outline:none;border-color:var(--accent2)}
-input[readonly]{color:var(--muted);cursor:not-allowed}
-.btn{display:inline-block;width:100%;font-family:inherit;font-size:1rem;font-weight:700;letter-spacing:.04em;
-  margin-top:1.4rem;padding:.85rem 2rem;border-radius:11px;border:1px solid transparent;cursor:pointer;text-align:center;
-  text-decoration:none;background:linear-gradient(120deg,var(--accent),var(--accent2));color:#04140a}
-.btn:hover{filter:brightness(1.05)}
-.btn-danger{background:none;border-color:rgba(255,80,80,.45);color:#ff8a8a}
-.btn-danger:hover{background:rgba(255,80,80,.1);filter:none}
-.status{text-align:center;font-size:.95rem;color:var(--muted);margin-bottom:.4rem}
-.status b{color:var(--fg)}
-.err{color:#ff8a8a;font-size:.9rem;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.25);
-  border-radius:10px;padding:.7rem .85rem;margin-bottom:.6rem}
-.wrap-wide{max-width:1080px}
-.tablewrap{overflow-x:auto;margin-top:1.2rem;border:1px solid var(--border);border-radius:12px}
-table{border-collapse:collapse;width:100%;font-size:.82rem}
-th,td{padding:.55rem .7rem;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border)}
-th{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
-  background:rgba(255,255,255,.03);position:sticky;top:0}
-tbody tr:last-child td{border-bottom:none}
-tbody tr:hover{background:rgba(255,255,255,.03)}
-td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
-.tag{display:inline-block;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;
-  padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border)}
-.tag-ok{color:var(--accent);border-color:rgba(57,211,83,.35);background:rgba(57,211,83,.1)}
-.tag-wait{color:#ffcf70;border-color:rgba(255,180,60,.35);background:rgba(255,180,60,.1)}
-.sumgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-top:.4rem}
-.sumcell{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem}
-.sumcell .k{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
-.sumcell .v{font-size:1.5rem;font-weight:900;font-variant-numeric:tabular-nums;margin-top:.15rem}
-.foot{margin-top:1.6rem;font-size:.78rem;color:var(--muted)}
-.foot a{color:var(--accent2);text-decoration:none}
-.foot a:hover{text-decoration:underline}
-`
-
 // tmpl parses the named templates once at startup.
 var tmpl = template.Must(template.New("dday").Parse(templatesSrc))
 
 const templatesSrc = `
 {{define "head"}}<!DOCTYPE html><html lang="pl"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{.Title}} · D-Day · Hakierspejs Łódź</title><style>` + pageCSS + `</style></head><body><main class="wrap"><div class="card">
+<title>{{.Title}} · D-Day · Hakierspejs Łódź</title><link rel="stylesheet" href="/style.css">
+</head><body class="page"><main class="wrap"><div class="card">
 <h1>D-Day</h1><div class="sub">Zapisy · Unconference · Hakierspejs Łódź</div>{{end}}
 
 {{define "foot"}}<div class="foot"><a href="/privacy">Polityka prywatności / RODO</a></div>
@@ -128,8 +73,9 @@ const templatesSrc = `
 {{define "admin"}}<!DOCTYPE html><html lang="pl"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>{{.Title}} · D-Day · Hakierspejs Łódź</title><style>` + pageCSS + `</style></head>
-<body><main class="wrap wrap-wide"><div class="card">
+<title>{{.Title}} · D-Day · Hakierspejs Łódź</title><link rel="stylesheet" href="/style.css">
+</head>
+<body class="page"><main class="wrap wrap-wide"><div class="card">
 <h1>D-Day</h1><div class="sub">Panel admina · podgląd zgłoszeń</div>
 <div class="sumgrid">
 <div class="sumcell"><div class="k">Uczestnicy</div><div class="v">{{.Confirmed}}/{{.SeatLimit}}</div></div>

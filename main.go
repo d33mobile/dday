@@ -1,8 +1,8 @@
 // Command dday serves the D-Day landing page and the event registration flow.
 //
-// It embeds index.html and privacy.html into the binary, so the container is
-// fully self-contained. Set STATIC_DIR to serve static files from the
-// filesystem instead (useful for live-editing during development).
+// It embeds index.html, privacy.html and style.css into the binary, so the
+// container is fully self-contained. Set STATIC_DIR to serve static files from
+// the filesystem instead (useful for live-editing during development).
 //
 // Registration state is persisted in a pure-Go SQLite database (CGO off).
 package main
@@ -30,7 +30,7 @@ import (
 	"filippo.io/age"
 )
 
-//go:embed index.html privacy.html
+//go:embed index.html privacy.html style.css
 var embedded embed.FS
 
 // Capacity model: the first seatLimit registrations (numbers 1..seatLimit) are

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -86,6 +87,7 @@ func newMux(d deps) http.Handler {
 	mux.HandleFunc("/api/registrations", d.handleRegistrations)
 	mux.HandleFunc("/admin", d.handleAdmin)
 	mux.HandleFunc("/privacy", d.handlePrivacy)
+	mux.HandleFunc("/style.css", d.handleStylesheet)
 	mux.HandleFunc("/", d.handleRoot)
 
 	return secure(mux)
@@ -104,23 +106,46 @@ func (d deps) handleRoot(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	d.serveStatic(w, "index.html")
+	d.serveStatic(w, "index.html", contentTypeHTML)
 }
 
-// serveStatic writes one of the fixed, known HTML files from d.files. Only the
-// names the handlers reference can be served — there is no path input, so a
-// STATIC_DIR pointing at a directory with secrets cannot expose them.
-func (d deps) serveStatic(w http.ResponseWriter, name string) {
+// Content types of the static files the handlers may serve.
+const (
+	contentTypeHTML = "text/html; charset=utf-8"
+	contentTypeCSS  = "text/css; charset=utf-8"
+)
+
+// stylesheetMaxAge is how long /style.css may be cached. Short enough that a
+// redeployed stylesheet reaches visitors quickly, long enough to spare the
+// server a request per page view.
+const stylesheetMaxAge = time.Hour
+
+// serveStatic writes one of the fixed, known files from d.files with the given
+// content type. Only the names the handlers reference can be served — there is
+// no path input, so a STATIC_DIR pointing at a directory with secrets cannot
+// expose them.
+func (d deps) serveStatic(w http.ResponseWriter, name, contentType string) {
 	f, err := d.files.Open(name)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	defer f.Close()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Type", contentType)
 	if _, err := io.Copy(w, f); err != nil {
 		log.Printf("serve %s: %v", name, err)
 	}
+}
+
+// handleStylesheet serves the one stylesheet shared by the landing page, the
+// privacy page and the server-rendered templates.
+func (d deps) handleStylesheet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(stylesheetMaxAge.Seconds())))
+	d.serveStatic(w, "style.css", contentTypeCSS)
 }
 
 // methodNotAllowed writes a 405 with an Allow: GET header, for the GET-only
@@ -150,7 +175,7 @@ func (d deps) handlePrivacy(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	d.serveStatic(w, "privacy.html")
+	d.serveStatic(w, "privacy.html", contentTypeHTML)
 }
 
 // decode validates a token and checks it was issued for wantKind; on failure it

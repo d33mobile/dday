@@ -16,10 +16,11 @@ Dwie binarki Go (bez CGO), wspólny pakiet z datami i konfiguracją terminu:
 
 | Komponent | Ścieżka | Opis |
 |---|---|---|
-| Serwer WWW | `.` (`main.go`, `server.go`, `templates.go`) | landing + rejestracja; `index.html` i `privacy.html` są `go:embed`-owane w binarce |
+| Serwer WWW | `.` (`main.go`, `server.go`, `templates.go`) | landing + rejestracja; `index.html`, `privacy.html` i `style.css` są `go:embed`-owane w binarce |
 | Bot Matrix | `cmd/bot`, `internal/matrixbot` | nasłuchuje `!start`, wysyła DM z prywatnym linkiem (rejestracja albo panel) |
 | Bramka czasowa i daty | `internal/regwindow` | jedyne źródło prawdy dla terminów; generuje polskie opisy dat |
 | Baza | `internal/store` | SQLite przez `modernc.org/sqlite` (czysty Go) |
+| Style | `style.css` | jedyny arkusz stylów; sekcje `body.landing` / `body.page` / `body.privacy` |
 
 Trasy serwera WWW:
 
@@ -35,6 +36,7 @@ Trasy serwera WWW:
 | `POST /panel` | wycofanie udziału (tożsamość wyłącznie z tokenu) |
 | `GET /admin?t=…` | panel admina: podgląd wszystkich zgłoszeń; wymaga `ADMIN_TOKEN`, bez tokenu 404 |
 | `GET /privacy` | polityka prywatności (`privacy.html`) |
+| `GET /style.css` | wspólny arkusz stylów wszystkich stron (`style.css`) |
 | `GET /healthz` | health check (używany też przez `dday -healthcheck`) |
 
 ## Jak działa rejestracja
@@ -132,7 +134,7 @@ Serwer WWW:
 | Zmienna | Domyślnie | Opis |
 |---|---|---|
 | `PORT` | `3329` | port nasłuchu |
-| `STATIC_DIR` | *(puste)* | katalog z `index.html`/`privacy.html` zamiast wersji wbudowanej (dev) |
+| `STATIC_DIR` | *(puste)* | katalog z `index.html`/`privacy.html`/`style.css` zamiast wersji wbudowanej (dev) |
 | `DB_PATH` | `./dday.db` | plik bazy SQLite |
 | `AGE_KEY` | `config/dday_ed25519` | ścieżka klucza prywatnego age |
 | `AGE_KEY_DATA` | *(puste)* | ten sam klucz przekazany base64 (ma pierwszeństwo; używane w kontenerze) |

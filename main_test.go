@@ -588,6 +588,18 @@ func TestStaticDirDoesNotLeak(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "D-Day") {
 		t.Errorf("GET / missing landing content")
 	}
+	// Relative href, so the same file also works on GitHub Pages and file://.
+	if !strings.Contains(rec.Body.String(), `<link rel="stylesheet" href="style.css">`) {
+		t.Errorf("landing page does not link the shared stylesheet")
+	}
+	if !strings.Contains(rec.Body.String(), `<body class="landing">`) {
+		t.Errorf("landing page missing the body.landing scope class")
+	}
+	// The stylesheet is on the allowlist — every page links it — while the rest
+	// of the directory stays invisible.
+	if rec := do("/style.css"); rec.Code != http.StatusOK {
+		t.Errorf("GET /style.css = %d; want 200 (allowlisted static file)", rec.Code)
+	}
 }
 
 // TestReadEndpointsGETOnly verifies the read endpoints answer 405 (Allow: GET)
@@ -665,6 +677,77 @@ func TestRegisterEmptyCity(t *testing.T) {
 	}
 }
 
+// TestStylesheet covers the single stylesheet every page links: it is served as
+// text/css with real content, is cacheable, and answers GET only.
+func TestStylesheet(t *testing.T) {
+	e := newTestEnv(t, true, 20)
+
+	rec := e.get(t, "/style.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /style.css = %d; want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("Content-Type = %q; want text/css; charset=utf-8", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.HasPrefix(cc, "public, max-age=") {
+		t.Errorf("Cache-Control = %q; want a public max-age", cc)
+	}
+	body := rec.Body.String()
+	if len(body) == 0 {
+		t.Fatal("stylesheet body is empty")
+	}
+	// One source of truth: the tokens plus a rule from each page family.
+	for _, want := range []string{"--accent:#39d353", "body.landing .wrap", "body.page .btn", "body.privacy .note"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("stylesheet missing %q", want)
+		}
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "/style.css", nil)
+	prec := httptest.NewRecorder()
+	e.handler.ServeHTTP(prec, post)
+	if prec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /style.css = %d; want 405", prec.Code)
+	}
+	if allow := prec.Header().Get("Allow"); allow != "GET" {
+		t.Errorf("Allow = %q; want GET", allow)
+	}
+}
+
+// TestServerPagesLinkStylesheet pins the de-duplication: the server-rendered
+// pages must pull the shared stylesheet rather than carry an inline copy.
+func TestServerPagesLinkStylesheet(t *testing.T) {
+	e := newTestEnvAdmin(t, 20, 20, "admintok")
+	tok := e.token(t, "@alice:matrix.org")
+	if rec := e.postTo(t, "/register", url.Values{
+		"t": {tok}, "city": {"Łódź"}, "email": {"alice@example.com"},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("seed registration = %d; want 200", rec.Code)
+	}
+
+	pages := map[string]string{
+		"form":  "/register?t=" + url.QueryEscape(e.token(t, "@bob:matrix.org")),
+		"panel": "/panel?t=" + url.QueryEscape(e.tokenKind(t, "@alice:matrix.org", matrixbot.KindPanel)),
+		"admin": "/admin?t=admintok",
+	}
+	for name, path := range pages {
+		rec := e.get(t, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s (%s) = %d; want 200", path, name, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `<link rel="stylesheet" href="/style.css">`) {
+			t.Errorf("%s page does not link /style.css", name)
+		}
+		if strings.Contains(body, "<style>") {
+			t.Errorf("%s page still carries an inline <style> block", name)
+		}
+		if !strings.Contains(body, `<body class="page"`) {
+			t.Errorf("%s page missing the body.page scope class", name)
+		}
+	}
+}
+
 func TestPrivacyPage(t *testing.T) {
 	e := newTestEnv(t, true, 20)
 	rec := e.get(t, "/privacy")
@@ -676,5 +759,13 @@ func TestPrivacyPage(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "art. 6 ust. 1 lit. b RODO") {
 		t.Errorf("privacy body missing legal basis")
+	}
+	// Relative href: /privacy has no trailing slash, so it resolves to
+	// /style.css here and to /dday/style.css on GitHub Pages.
+	if !strings.Contains(rec.Body.String(), `<link rel="stylesheet" href="style.css">`) {
+		t.Errorf("privacy page does not link the shared stylesheet")
+	}
+	if !strings.Contains(rec.Body.String(), `<body class="privacy">`) {
+		t.Errorf("privacy page missing the body.privacy scope class")
 	}
 }
