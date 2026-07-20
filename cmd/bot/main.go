@@ -18,6 +18,12 @@
 //	TOKEN_SECRET        shared HMAC key authenticating the link token (must match web)
 //	ALLOWED_ROOMS       optional comma-separated room ids; if set, !start is
 //	                    only honoured in those rooms (unset = every room)
+//	INTERNAL_TOKEN      shared bearer token for the web service's internal API
+//	                    (already-registered check and the announcement feed)
+//	ANNOUNCE_ROOM       room new registrations are announced in; defaults to
+//	                    MATRIX_ROOM. Empty (and both empty) disables announcing,
+//	                    as does a missing INTERNAL_TOKEN
+//	ANNOUNCE_INTERVAL   how often to poll for new registrations (e.g. "30s")
 //
 // Note: the bot reads plaintext rooms only (no E2E encryption), so keep the
 // command room unencrypted.
@@ -33,8 +39,10 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"filippo.io/age"
 
@@ -88,6 +96,20 @@ func main() {
 		}
 		c.CheckRegistered = registeredChecker(c.HTTP, origin, tok)
 		log.Printf("already-registered check enabled against %s", origin)
+
+		// Announcements need the same internal token: registrations complete on
+		// the web side, so the bot polls the internal feed and posts about the
+		// ids it has not announced yet. The feed carries no personal data.
+		c.FetchNewRegistrations = registrationsFetcher(c.HTTP, origin, tok)
+	} else {
+		log.Printf("no INTERNAL_TOKEN; already-registered check and registration announcements disabled")
+	}
+
+	// Announcement target: ANNOUNCE_ROOM wins, else the home channel MATRIX_ROOM.
+	c.AnnounceRoom = env("ANNOUNCE_ROOM", os.Getenv("MATRIX_ROOM"))
+	c.AnnounceInterval = announceInterval()
+	if c.AnnounceRoom == "" {
+		log.Printf("no ANNOUNCE_ROOM/MATRIX_ROOM; registration announcements disabled")
 	}
 
 	// Optional on-disk persistence of the DM room cache (handle -> room id). When
@@ -188,6 +210,52 @@ func registeredChecker(httpc *http.Client, origin, token string) func(string) (i
 		}
 		return out.Number, out.Registered, nil
 	}
+}
+
+// registrationsFetcher returns a FetchNewRegistrations function that queries the
+// web service's internal GET /api/registrations?since= endpoint with the shared
+// bearer token. The endpoint returns handle/nick plus the participant number and
+// standing — no e-mail or city, so nothing personal can reach the public room.
+func registrationsFetcher(httpc *http.Client, origin, token string) func(int) ([]matrixbot.NewRegistration, error) {
+	return func(since int) ([]matrixbot.NewRegistration, error) {
+		req, err := http.NewRequest(http.MethodGet,
+			origin+"/api/registrations?since="+strconv.Itoa(since), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := httpc.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GET /api/registrations -> %d", resp.StatusCode)
+		}
+		var out struct {
+			Registrations []matrixbot.NewRegistration `json:"registrations"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, err
+		}
+		return out.Registrations, nil
+	}
+}
+
+// announceInterval reads ANNOUNCE_INTERVAL as a Go duration. Unset, unparsable
+// or non-positive values fall back to the package default (logged), so a typo
+// degrades to the normal cadence instead of a hot loop.
+func announceInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("ANNOUNCE_INTERVAL"))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("ignoring ANNOUNCE_INTERVAL=%q (%v); using the default", raw, err)
+		return 0
+	}
+	return d
 }
 
 func env(k, fallback string) string {

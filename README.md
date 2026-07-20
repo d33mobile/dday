@@ -30,6 +30,7 @@ Trasy serwera WWW:
 | `POST /register` | zapis (miejscowość + e-mail); tożsamość wyłącznie z tokenu |
 | `GET /api/count` | JSON: obłożenie miejsc + wszystkie daty i ich opisy (patrz niżej) |
 | `GET /api/registered?h=@user:hs` | wewnętrzne, dla bota; wymaga `Authorization: Bearer $INTERNAL_TOKEN`, bez tokenu 404 |
+| `GET /api/registrations?since=<id>` | wewnętrzne, dla bota: zgłoszenia o `id > since` do ogłoszeń na kanale; wymaga `Authorization: Bearer $INTERNAL_TOKEN`, bez tokenu 404, **bez e-maila i miejscowości** |
 | `GET /panel?t=…` | panel uczestnika dla ważnego magic linku: status + przycisk „Wycofaj udział" |
 | `POST /panel` | wycofanie udziału (tożsamość wyłącznie z tokenu) |
 | `GET /admin?t=…` | panel admina: podgląd wszystkich zgłoszeń; wymaga `ADMIN_TOKEN`, bez tokenu 404 |
@@ -98,6 +99,28 @@ curl -H "Authorization: Bearer <ADMIN_TOKEN>" https://dday.hs-ldz.pl/admin
 - Status liczony jest z **rangi** (pozycji wśród aktualnych wierszy), więc po
   wycofaniu się uczestnika awans z listy rezerwowej widać od razu.
 
+## Ogłoszenia nowych zapisów
+
+Rejestracja kończy się po stronie WWW, więc bot nie dowiaduje się o niej sam — **cyklicznie
+odpytuje** wewnętrzny endpoint `GET /api/registrations?since=<ostatnie ogłoszone id>`
+(bearer `INTERNAL_TOKEN`) i ogłasza to, czego jeszcze nie ogłosił, na kanale macierzystym:
+
+```
+🎉 alice dołącza do D-Day — uczestnik #5
+🎉 bob zapisał(a) się na D-Day — lista rezerwowa, pozycja #2
+```
+
+- **Bez danych osobowych.** Ogłoszenie zawiera wyłącznie handle Matrix (jako mention
+  przez `matrix.to`) i numer uczestnika albo pozycję na liście rezerwowej. E-mail
+  i miejscowość nie wychodzą poza serwer — endpoint `/api/registrations` w ogóle
+  ich nie zwraca, a typ, którym posługuje się bot, nie ma na nie pól.
+- **Bez powtórek po restarcie.** Ostatnie ogłoszone `id` jest zapisywane w tym samym
+  pliku co cache DM (`DM_CACHE_PATH`, format `{"dms":{…},"lastAnnounced":N}`; stary,
+  płaski format wczytuje się nadal, z `lastAnnounced=0`).
+- **Pierwszy start bez stanu nie odtwarza historii**: bot ustawia `lastAnnounced` na
+  aktualne maksymalne `id` i ogłasza dopiero kolejne zapisy.
+- Wyłączenie: puste `ANNOUNCE_ROOM` (i `MATRIX_ROOM`) albo brak `INTERNAL_TOKEN`.
+
 Landing pobiera stan z `/api/count` (licznik zapisanych, pasek, lista rezerwowa,
 flaga `open` i daty). Bez API (np. GitHub Pages) strona degraduje się do wartości
 wpisanych na sztywno w `index.html`.
@@ -114,7 +137,7 @@ Serwer WWW:
 | `AGE_KEY` | `config/dday_ed25519` | ścieżka klucza prywatnego age |
 | `AGE_KEY_DATA` | *(puste)* | ten sam klucz przekazany base64 (ma pierwszeństwo; używane w kontenerze) |
 | `TOKEN_SECRET` | *(puste)* | wspólny sekret HMAC dla tokenów; musi być identyczny u bota |
-| `INTERNAL_TOKEN` | *(puste)* | bearer chroniący `/api/registered`; puste = endpoint wyłączony (404) |
+| `INTERNAL_TOKEN` | *(puste)* | bearer chroniący `/api/registered` i `/api/registrations`; puste = endpointy wyłączone (404) |
 | `ADMIN_TOKEN` | *(puste)* | token chroniący `/admin`; puste = panel admina wyłączony (404) |
 | `REGISTRATION_OPEN` | *(puste)* | `1`/`true`/`yes` wymusza otwarte zapisy; inaczej decyduje bramka czasowa |
 | `REGISTRATION_OPEN_AT` | `2026-07-26 15:00` | moment otwarcia zapisów |
@@ -134,9 +157,11 @@ Bot Matrix (`cmd/bot`, konfiguracja zwykle w `matrix.env`):
 | `AGE_PUB` | `config/dday_ed25519.pub` | klucz publiczny age, którym bot szyfruje tokeny |
 | `AGE_PUB_DATA` | *(puste)* | ten sam klucz base64 (ma pierwszeństwo) |
 | `TOKEN_SECRET` | *(puste)* | jak wyżej — musi zgadzać się z serwerem |
-| `INTERNAL_TOKEN` | *(puste)* | włącza pytanie `/api/registered` przed wydaniem linku |
+| `INTERNAL_TOKEN` | *(puste)* | włącza pytanie `/api/registered` przed wydaniem linku oraz ogłaszanie nowych zapisów (`/api/registrations`) |
+| `ANNOUNCE_ROOM` | `MATRIX_ROOM` | pokój, w którym bot ogłasza nowe zapisy; puste = ogłaszanie wyłączone |
+| `ANNOUNCE_INTERVAL` | `30s` | jak często bot odpytuje `/api/registrations` (format `time.ParseDuration`) |
 | `ALLOWED_ROOMS` | *(puste)* | lista room id po przecinku; puste = bot reaguje wszędzie |
-| `DM_CACHE_PATH` | *(puste)* | plik cache `handle → room id`, przeżywa restart |
+| `DM_CACHE_PATH` | *(puste)* | plik stanu bota (cache `handle → room id` + `lastAnnounced`), przeżywa restart |
 | `REGISTRATION_OPEN`, `REGISTRATION_OPEN_AT` | jak wyżej | bot używa tej samej bramki i tego samego opisu daty |
 
 Formaty dat (`*_AT`): RFC3339 (`2026-07-26T15:00:00+02:00`) albo

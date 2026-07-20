@@ -31,12 +31,12 @@ func TestCacheRoundTripSkipsServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cache file not written: %v", err)
 	}
-	var onDisk map[string]string
+	var onDisk cacheFile
 	if err := json.Unmarshal(raw, &onDisk); err != nil {
 		t.Fatalf("cache file is not valid JSON: %v", err)
 	}
-	if onDisk[user] != dm {
-		t.Fatalf("on-disk cache = %v; want %s -> %s", onDisk, user, dm)
+	if onDisk.DMs[user] != dm {
+		t.Fatalf("on-disk cache = %v; want %s -> %s", onDisk.DMs, user, dm)
 	}
 
 	// A server that fails the test if it is ever asked to create a room or read
@@ -163,8 +163,11 @@ func TestCacheDMConcurrentNoRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cache file: %v", err)
 	}
-	var m map[string]string
+	var m cacheFile
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("final cache is not valid JSON: %v", err)
+	}
+	if len(m.DMs) == 0 {
+		t.Errorf("final cache has no DM entries: %v", m)
 	}
 }

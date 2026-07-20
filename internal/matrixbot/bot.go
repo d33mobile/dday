@@ -68,6 +68,19 @@ type Client struct {
 	// disk I/O — behaviour is exactly as if the cache were purely in-memory.
 	CachePath string
 
+	// AnnounceRoom is the room new registrations are announced in (typically the
+	// home channel, MATRIX_ROOM). Empty disables announcements entirely.
+	AnnounceRoom string
+
+	// AnnounceInterval is how often the announce loop polls the web service for
+	// new registrations. Zero or negative uses defaultAnnounceInterval.
+	AnnounceInterval time.Duration
+
+	// FetchNewRegistrations returns the registrations with id > sinceID, in id
+	// order, by querying the web service's internal feed. nil disables
+	// announcements (as does an empty AnnounceRoom).
+	FetchNewRegistrations func(sinceID int) ([]NewRegistration, error)
+
 	// now returns the current time; overridable in tests to drive the rate
 	// limiter deterministically. nil means time.Now.
 	now func() time.Time
@@ -76,6 +89,26 @@ type Client struct {
 	mu       sync.Mutex
 	dmRooms  map[string]string    // handle -> cached DM room id (reused across commands)
 	lastSeen map[string]time.Time // handle -> last acted-on "!start" time
+
+	// lastAnnounced is the highest registration id already announced. It is
+	// persisted with the DM cache so a restart does not re-announce.
+	lastAnnounced int
+	// baselined records that the announce loop has established its starting
+	// point, so the "first run without state" branch runs at most once.
+	baselined bool
+}
+
+// NewRegistration is one signup as reported by the web service's internal
+// registrations feed. It intentionally carries no e-mail or city: announcements
+// go to a public room, so personal data must not even be transported here.
+// The json tags match the web service's /api/registrations feed.
+type NewRegistration struct {
+	ID          int    `json:"id"`
+	Handle      string `json:"handle"`
+	Nick        string `json:"nick"`
+	Rank        int    `json:"rank"`
+	Confirmed   bool   `json:"confirmed"`
+	WaitlistPos int    `json:"waitlistPos"`
 }
 
 // New returns a Client for the given homeserver.
@@ -215,6 +248,15 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 	log.Printf("listening for !start (bot is %s)", c.Self)
 
+	// Announcements run on their own clock, independent of the sync loop: the
+	// registration completes on the web side, so the only way the bot learns
+	// about it is by polling. The goroutine exits with ctx.
+	if c.announcementsEnabled() {
+		go c.announceLoop(ctx)
+	} else {
+		log.Printf("registration announcements disabled (no announce room or no feed)")
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -253,6 +295,119 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// defaultAnnounceInterval is how often the announce loop polls the web service
+// for registrations it has not announced yet.
+const defaultAnnounceInterval = 30 * time.Second
+
+// announcementsEnabled reports whether the bot should announce new signups: it
+// needs both a target room and a way to fetch them.
+func (c *Client) announcementsEnabled() bool {
+	return c.AnnounceRoom != "" && c.FetchNewRegistrations != nil
+}
+
+// announceLoop polls for new registrations every AnnounceInterval and posts
+// them in AnnounceRoom, until ctx is done. It owns no logic beyond the ticking:
+// one poll-and-post cycle is announceOnce, which tests drive directly.
+func (c *Client) announceLoop(ctx context.Context) {
+	every := c.AnnounceInterval
+	if every <= 0 {
+		every = defaultAnnounceInterval
+	}
+	log.Printf("announcing new registrations in %s every %s", c.AnnounceRoom, every)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if err := c.announceOnce(); err != nil {
+			// A failing poll or send must not kill the loop: the next tick
+			// retries from the same lastAnnounced, so nothing is skipped.
+			log.Printf("announce cycle: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// announceOnce runs a single announce cycle: fetch everything newer than
+// lastAnnounced and post one message per registration in AnnounceRoom, then
+// persist the new high-water mark.
+//
+// The very first cycle after a start without persisted state does not post
+// anything — it only adopts the current maximum id as the baseline, so a bot
+// deployed against an already-populated database does not spam the room with
+// the whole history. Only signups arriving after that are announced.
+func (c *Client) announceOnce() error {
+	if !c.announcementsEnabled() {
+		return nil
+	}
+	c.mu.Lock()
+	since := c.lastAnnounced
+	baseline := !c.baselined && since == 0
+	c.mu.Unlock()
+
+	regs, err := c.FetchNewRegistrations(since)
+	if err != nil {
+		return fmt.Errorf("fetch registrations since %d: %w", since, err)
+	}
+
+	if baseline {
+		max := since
+		for _, r := range regs {
+			if r.ID > max {
+				max = r.ID
+			}
+		}
+		c.mu.Lock()
+		c.baselined = true
+		c.lastAnnounced = max
+		c.persistLocked()
+		c.mu.Unlock()
+		log.Printf("announce baseline set to registration #%d (%d existing signup(s) not announced)", max, len(regs))
+		return nil
+	}
+
+	var firstErr error
+	for _, r := range regs {
+		if r.ID <= since {
+			continue
+		}
+		plain, html := announceText(r)
+		if err := c.sendHTML(c.AnnounceRoom, plain, html); err != nil {
+			// Stop at the first failure and keep lastAnnounced where it is, so
+			// the next cycle retries this registration instead of losing it.
+			if firstErr == nil {
+				firstErr = fmt.Errorf("announce registration #%d: %w", r.ID, err)
+			}
+			break
+		}
+		c.mu.Lock()
+		if r.ID > c.lastAnnounced {
+			c.lastAnnounced = r.ID
+		}
+		c.baselined = true
+		c.persistLocked()
+		c.mu.Unlock()
+	}
+	return firstErr
+}
+
+// announceText renders the public announcement for one registration, as a
+// (plain, html) pair. It uses only the Matrix handle and the participant
+// number/waiting-list position — never the e-mail or city, which stay on the
+// web side and must not reach a public room.
+func announceText(r NewRegistration) (string, string) {
+	name := localpart(r.Handle)
+	link := mention(r.Handle)
+	if r.Confirmed {
+		return fmt.Sprintf("🎉 %s dołącza do D-Day — uczestnik #%d", name, r.ID),
+			fmt.Sprintf("🎉 %s dołącza do D-Day — uczestnik #%d", link, r.ID)
+	}
+	return fmt.Sprintf("🎉 %s zapisał(a) się na D-Day — lista rezerwowa, pozycja #%d", name, r.WaitlistPos),
+		fmt.Sprintf("🎉 %s zapisał(a) się na D-Day — lista rezerwowa, pozycja #%d", link, r.WaitlistPos)
 }
 
 // isStartCmd reports whether body's first word is the bot's command. "!start"
@@ -509,20 +664,38 @@ func (c *Client) cacheDM(user, room string) {
 		c.dmRooms = make(map[string]string)
 	}
 	c.dmRooms[user] = room
+	c.persistLocked()
+}
+
+// cacheFile is the on-disk shape of the bot state at CachePath: the DM room
+// cache plus the id of the last registration announced. It replaced the bare
+// handle->roomID map; loadCacheFile still accepts that legacy flat form.
+type cacheFile struct {
+	DMs           map[string]string `json:"dms"`
+	LastAnnounced int               `json:"lastAnnounced"`
+}
+
+// persistLocked writes the current state to CachePath. It is best-effort (an
+// I/O error is logged, never propagated) and a no-op without a CachePath.
+// Callers must hold c.mu — the file always reflects a consistent snapshot.
+func (c *Client) persistLocked() {
 	if c.CachePath == "" {
 		return
 	}
-	if err := writeCacheFile(c.CachePath, c.dmRooms); err != nil {
-		log.Printf("persist DM cache to %s: %v", c.CachePath, err)
+	if err := writeCacheFile(c.CachePath, cacheFile{DMs: c.dmRooms, LastAnnounced: c.lastAnnounced}); err != nil {
+		log.Printf("persist bot cache to %s: %v", c.CachePath, err)
 	}
 }
 
-// writeCacheFile atomically writes the handle->roomID map as JSON to path. It
-// writes to a temporary file in the same directory and renames it into place,
-// so a crash mid-write never leaves a truncated/corrupt cache. Callers hold the
-// lock guarding the map, so the snapshot is consistent.
-func writeCacheFile(path string, rooms map[string]string) error {
-	data, err := json.Marshal(rooms)
+// writeCacheFile atomically writes the state as JSON to path. It writes to a
+// temporary file in the same directory and renames it into place, so a crash
+// mid-write never leaves a truncated/corrupt cache. Callers hold the lock
+// guarding the state, so the snapshot is consistent.
+func writeCacheFile(path string, state cacheFile) error {
+	if state.DMs == nil {
+		state.DMs = map[string]string{}
+	}
+	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
@@ -548,11 +721,11 @@ func writeCacheFile(path string, rooms map[string]string) error {
 	return nil
 }
 
-// LoadCache populates the in-memory dmRooms map from the JSON file at CachePath.
-// A missing file is not an error (the bot simply starts with an empty cache). A
-// present-but-corrupt file is logged and treated as empty rather than fatal, so
-// a mangled cache cannot crash-loop the bot. It returns the number of entries
-// loaded. When CachePath is empty it is a no-op returning 0.
+// LoadCache populates the in-memory state (DM rooms and lastAnnounced) from the
+// JSON file at CachePath. A missing file is not an error (the bot simply starts
+// empty). A present-but-corrupt file is logged and treated as empty rather than
+// fatal, so a mangled cache cannot crash-loop the bot. It returns the number of
+// DM entries loaded. When CachePath is empty it is a no-op returning 0.
 func (c *Client) LoadCache() (int, error) {
 	if c.CachePath == "" {
 		return 0, nil
@@ -564,9 +737,9 @@ func (c *Client) LoadCache() (int, error) {
 		}
 		return 0, err
 	}
-	var loaded map[string]string
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		log.Printf("DM cache %s is corrupt (%v); starting empty", c.CachePath, err)
+	loaded, ok := parseCacheFile(data)
+	if !ok {
+		log.Printf("bot cache %s is corrupt; starting empty", c.CachePath)
 		return 0, nil
 	}
 	c.mu.Lock()
@@ -574,12 +747,29 @@ func (c *Client) LoadCache() (int, error) {
 	if c.dmRooms == nil {
 		c.dmRooms = make(map[string]string)
 	}
-	for user, room := range loaded {
+	for user, room := range loaded.DMs {
 		if user != "" && room != "" {
 			c.dmRooms[user] = room
 		}
 	}
+	c.lastAnnounced = loaded.LastAnnounced
 	return len(c.dmRooms), nil
+}
+
+// parseCacheFile decodes the cache, accepting both the current object form
+// ({"dms":{...},"lastAnnounced":N}) and the legacy flat handle->roomID map
+// written by older builds. The legacy form loads with lastAnnounced 0, which
+// makes the bot re-baseline on the current max id instead of replaying history.
+func parseCacheFile(data []byte) (cacheFile, bool) {
+	var cur cacheFile
+	if err := json.Unmarshal(data, &cur); err == nil && cur.DMs != nil {
+		return cur, true
+	}
+	var legacy map[string]string
+	if err := json.Unmarshal(data, &legacy); err == nil {
+		return cacheFile{DMs: legacy}, true
+	}
+	return cacheFile{}, false
 }
 
 // directMap is the shape of the m.direct account data: a mapping from a user's

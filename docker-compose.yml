@@ -70,14 +70,17 @@ services:
     build: .
     entrypoint: ["/bot"]
     restart: unless-stopped
-    # matrix.env (gitignored) supplies MATRIX_HOMESERVER/USER/PASSWORD + REGISTER_URL.
+    # matrix.env (gitignored) supplies MATRIX_HOMESERVER/USER/PASSWORD + REGISTER_URL
+    # and MATRIX_ROOM, which doubles as the default ANNOUNCE_ROOM (the channel new
+    # registrations are announced in). Set ANNOUNCE_ROOM there to override it.
     env_file: matrix.env
     volumes:
       - bot-data:/data
     environment:
-      # Persist the DM room cache on the volume so it survives restarts: after a
-      # redeploy the bot reuses the recorded DM for a known handle without asking
-      # the server. /data is owned by nonroot (65532) in the image.
+      # Persist the bot state on the volume so it survives restarts: the DM room
+      # cache (a redeploy reuses the recorded DM for a known handle without asking
+      # the server) and the id of the last announced registration (so a restart
+      # does not re-announce). /data is owned by nonroot (65532) in the image.
       DM_CACHE_PATH: /data/dm_cache.json
       # matrix.env also sets AGE_PUB=config/... — a host path that does not exist
       # inside the image. Override with the public key passed BY VALUE as base64;
@@ -93,7 +96,8 @@ services:
       EVENT_START_AT: ${EVENT_START_AT:-}
       EVENT_END_AT: ${EVENT_END_AT:-}
       # Same shared secret as the web service, so the bot can call
-      # GET /api/registered before issuing a link. Empty → the bot skips the check.
+      # GET /api/registered before issuing a link and poll GET /api/registrations
+      # for new signups to announce. Empty → both are skipped.
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
       # Shared HMAC key authenticating the registration link token — must match the
       # web service so the token the bot signs verifies there. `make up` writes it.
