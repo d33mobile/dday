@@ -55,6 +55,10 @@ services:
       # verifies) agree. If empty, links carry no real authenticity — production
       # always has one generated.
       TOKEN_SECRET: ${TOKEN_SECRET:-}
+      # Token guarding the read-only admin view GET /admin (?t=… or an
+      # Authorization: Bearer header). `make up` writes one into .env; empty
+      # disables the endpoint entirely (404). Web-only — the bot never needs it.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
 
   # The Matrix bot: a separate long-lived process that listens for !start and
   # DMs the sender a registration link (or a "not open yet" notice when closed).

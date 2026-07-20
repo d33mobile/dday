@@ -36,6 +36,23 @@ input[readonly]{color:var(--muted);cursor:not-allowed}
 .status b{color:var(--fg)}
 .err{color:#ff8a8a;font-size:.9rem;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.25);
   border-radius:10px;padding:.7rem .85rem;margin-bottom:.6rem}
+.wrap-wide{max-width:1080px}
+.tablewrap{overflow-x:auto;margin-top:1.2rem;border:1px solid var(--border);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:.82rem}
+th,td{padding:.55rem .7rem;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border)}
+th{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  background:rgba(255,255,255,.03);position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.03)}
+td.num{font-variant-numeric:tabular-nums;color:var(--muted)}
+.tag{display:inline-block;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;
+  padding:.18rem .5rem;border-radius:999px;border:1px solid var(--border)}
+.tag-ok{color:var(--accent);border-color:rgba(57,211,83,.35);background:rgba(57,211,83,.1)}
+.tag-wait{color:#ffcf70;border-color:rgba(255,180,60,.35);background:rgba(255,180,60,.1)}
+.sumgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-top:.4rem}
+.sumcell{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem}
+.sumcell .k{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.sumcell .v{font-size:1.5rem;font-weight:900;font-variant-numeric:tabular-nums;margin-top:.15rem}
 .foot{margin-top:1.6rem;font-size:.78rem;color:var(--muted)}
 .foot a{color:var(--accent2);text-decoration:none}
 .foot a:hover{text-decoration:underline}
@@ -106,6 +123,34 @@ const templatesSrc = `
 <p style="font-size:1.05rem">Udział wycofany.</p>
 <p>Twoje zgłoszenie zostało usunięte, <b>{{.Nick}}</b>. Miejsce wraca do puli — jeśli ktoś czeka na liście rezerwowej, awansuje.</p>
 <p>Jeśli zmienisz zdanie, możesz zapisać się ponownie — napisz <b>!start</b> do bota na Matrixie (o ile będą jeszcze wolne miejsca).</p>
+{{template "foot" .}}{{end}}
+
+{{define "admin"}}<!DOCTYPE html><html lang="pl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.Title}} · D-Day · Hakierspejs Łódź</title><style>` + pageCSS + `</style></head>
+<body><main class="wrap wrap-wide"><div class="card">
+<h1>D-Day</h1><div class="sub">Panel admina · podgląd zgłoszeń</div>
+<div class="sumgrid">
+<div class="sumcell"><div class="k">Uczestnicy</div><div class="v">{{.Confirmed}}/{{.SeatLimit}}</div></div>
+<div class="sumcell"><div class="k">Lista rezerwowa</div><div class="v">{{.Waitlist}}/{{.WaitlistLimit}}</div></div>
+<div class="sumcell"><div class="k">Łącznie</div><div class="v">{{.Total}}/{{.Capacity}}</div></div>
+</div>
+{{if .Rows}}<div class="tablewrap"><table>
+<thead><tr><th>#</th><th>Status</th><th>Nick</th><th>Handle (MXID)</th><th>Miejscowość</th><th>E-mail</th><th>Data zapisu</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td class="num">{{.Number}}</td>
+<td>{{if .Confirmed}}<span class="tag tag-ok">{{.Status}}</span>{{else}}<span class="tag tag-wait">{{.Status}}</span>{{end}}</td>
+<td><b>{{.Nick}}</b></td>
+<td>{{.Handle}}</td>
+<td>{{.City}}</td>
+<td>{{.Email}}</td>
+<td class="num">{{.Created}}</td>
+</tr>
+{{end}}</tbody></table></div>
+{{else}}<p style="margin-top:1.2rem">Brak zgłoszeń.</p>{{end}}
+<p class="foot">Widok tylko do odczytu. Daty w strefie Europe/Warsaw. Wycofanie udziału robi uczestnik w swoim panelu; awaryjne usunięcie: <b>dday -delete &lt;handle&gt;</b>.</p>
 {{template "foot" .}}{{end}}
 
 {{define "message"}}{{template "head" .}}

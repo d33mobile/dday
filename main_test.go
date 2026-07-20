@@ -76,6 +76,19 @@ func newTestEnvToken(t *testing.T, open bool, limit int, internalToken string) *
 // waiting-list limit, so tests can exercise the two-tier capacity model.
 func newTestEnvSeats(t *testing.T, open bool, seatLimit, waitlistLimit int, internalToken string) *testEnv {
 	t.Helper()
+	return newTestEnvFull(t, open, seatLimit, waitlistLimit, internalToken, "")
+}
+
+// newTestEnvAdmin builds the mux with an explicit admin token, so the /admin
+// tests can exercise the guarded view (empty token disables it).
+func newTestEnvAdmin(t *testing.T, seatLimit, waitlistLimit int, adminToken string) *testEnv {
+	t.Helper()
+	return newTestEnvFull(t, true, seatLimit, waitlistLimit, "", adminToken)
+}
+
+// newTestEnvFull is the single mux builder every helper above delegates to.
+func newTestEnvFull(t *testing.T, open bool, seatLimit, waitlistLimit int, internalToken, adminToken string) *testEnv {
+	t.Helper()
 	rcpt, id := genKeypair(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -96,6 +109,7 @@ func newTestEnvSeats(t *testing.T, open bool, seatLimit, waitlistLimit int, inte
 		isOpen:        func() bool { return open },
 		files:         http.FS(sub),
 		internalToken: internalToken,
+		adminToken:    adminToken,
 		tokenSecret:   testTokenSecret,
 	})
 	return &testEnv{recipient: rcpt, store: st, handler: h}

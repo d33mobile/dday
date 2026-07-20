@@ -113,6 +113,40 @@ func (s *Store) Rank(handle string) (int, bool, error) {
 	}
 }
 
+// Registration is one stored signup, as returned by List. It carries every
+// column of the registrations table, including personal data — callers must
+// treat it accordingly (it backs the admin view only).
+type Registration struct {
+	ID        int
+	Handle    string
+	Nick      string
+	City      string
+	Email     string
+	CreatedAt int64 // unix seconds
+}
+
+// List returns every registration ordered by id, i.e. by signup order. The
+// slice position (index+1) is the row's rank, so callers can derive the
+// confirmed/waiting-list status without a per-row Rank query.
+func (s *Store) List() ([]Registration, error) {
+	rows, err := s.db.Query(
+		"SELECT id, matrix_handle, nick, city, email, created_at FROM registrations ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Registration
+	for rows.Next() {
+		var r Registration
+		if err := rows.Scan(&r.ID, &r.Handle, &r.Nick, &r.City, &r.Email, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // Email returns the stored e-mail address for handle. It is used to verify
 // that the web layer persists the normalized address rather than the raw form
 // submission. A missing handle yields sql.ErrNoRows.

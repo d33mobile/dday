@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTest(t *testing.T) *Store {
@@ -210,5 +211,49 @@ func TestRank(t *testing.T) {
 	// A deleted handle loses its rank.
 	if rank, ok, err := s.Rank("@a:hs.org"); err != nil || ok || rank != 0 {
 		t.Errorf("rank(deleted) = (%d, %v, %v); want (0, false, nil)", rank, ok, err)
+	}
+}
+
+// TestList covers the admin listing: every column round-trips, rows come back
+// in id order (so the slice index is the rank), and an empty table yields an
+// empty slice rather than an error.
+func TestList(t *testing.T) {
+	s := openTest(t)
+
+	if regs, err := s.List(); err != nil || len(regs) != 0 {
+		t.Fatalf("List() on empty db = (%v, %v); want (empty, nil)", regs, err)
+	}
+
+	before := time.Now().Unix()
+	for _, h := range []string{"@a:hs.org", "@b:hs.org", "@c:hs.org"} {
+		if _, err := s.Register(h, "nick-"+h, "Łódź", h+"@example.com", 20); err != nil {
+			t.Fatalf("register %s: %v", h, err)
+		}
+	}
+	// Delete the middle row: List must skip it and keep the id order.
+	if _, err := s.Delete("@b:hs.org"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	regs, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(regs) != 2 {
+		t.Fatalf("len(List()) = %d; want 2", len(regs))
+	}
+	if regs[0].Handle != "@a:hs.org" || regs[1].Handle != "@c:hs.org" {
+		t.Errorf("List() order = %q, %q; want @a, @c", regs[0].Handle, regs[1].Handle)
+	}
+	// ids are the immutable AUTOINCREMENT values, not the slice positions.
+	if regs[0].ID != 1 || regs[1].ID != 3 {
+		t.Errorf("List() ids = %d, %d; want 1, 3", regs[0].ID, regs[1].ID)
+	}
+	first := regs[0]
+	if first.Nick != "nick-@a:hs.org" || first.City != "Łódź" || first.Email != "@a:hs.org@example.com" {
+		t.Errorf("List()[0] fields = %+v", first)
+	}
+	if first.CreatedAt < before || first.CreatedAt > time.Now().Unix() {
+		t.Errorf("List()[0].CreatedAt = %d; want within [%d, now]", first.CreatedAt, before)
 	}
 }

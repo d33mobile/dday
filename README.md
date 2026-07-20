@@ -32,6 +32,7 @@ Trasy serwera WWW:
 | `GET /api/registered?h=@user:hs` | wewnętrzne, dla bota; wymaga `Authorization: Bearer $INTERNAL_TOKEN`, bez tokenu 404 |
 | `GET /panel?t=…` | panel uczestnika dla ważnego magic linku: status + przycisk „Wycofaj udział" |
 | `POST /panel` | wycofanie udziału (tożsamość wyłącznie z tokenu) |
+| `GET /admin?t=…` | panel admina: podgląd wszystkich zgłoszeń; wymaga `ADMIN_TOKEN`, bez tokenu 404 |
 | `GET /privacy` | polityka prywatności (`privacy.html`) |
 | `GET /healthz` | health check (używany też przez `dday -healthcheck`) |
 
@@ -69,6 +70,34 @@ tylko publiczny nudge „sprawdź prywatne wiadomości" (numeru uczestnika nie u
 - Gdy `PANEL_URL` nie da się ustalić, bot degraduje się do dawnej publicznej odpowiedzi
   „jesteś już zapisany", zamiast wysyłać zepsuty link.
 
+## Panel admina
+
+`GET /admin` to **widok tylko do odczytu** dla organizatora: podsumowanie obłożenia
+(uczestnicy `X/20`, lista rezerwowa `Y/20`, łącznie) oraz tabela wszystkich zgłoszeń —
+numer uczestnika, status (`uczestnik` / `rezerwa #poz`), nick, handle Matrix,
+miejscowość, e-mail i data zapisu (strefa Europe/Warsaw).
+
+Dostęp chroni `ADMIN_TOKEN`. Token można podać na dwa sposoby:
+
+```
+https://dday.hs-ldz.pl/admin?t=<ADMIN_TOKEN>
+curl -H "Authorization: Bearer <ADMIN_TOKEN>" https://dday.hs-ldz.pl/admin
+```
+
+- Token bierze się z pliku `.env` — `make up` generuje go raz i potem reużywa
+  (`grep ADMIN_TOKEN .env`).
+- Pusty `ADMIN_TOKEN` **wyłącza endpoint całkowicie** (404), tak samo jak
+  `INTERNAL_TOKEN` wyłącza `/api/registered`. Zły lub brakujący token → 401.
+  Porównanie jest constant-time.
+- **URL zawiera sekret** — nie wklejaj go na czat, do issue ani w screenshot.
+  Odpowiedź ma `Cache-Control: no-store`, a globalne `Referrer-Policy: no-referrer`
+  pilnuje, żeby token nie wyciekł nagłówkiem Referer. Kto ma token, ten widzi
+  dane osobowe wszystkich zapisanych.
+- Panel **nic nie modyfikuje**: wycofanie udziału robi sam uczestnik w `/panel`,
+  a awaryjne usunięcie danych to CLI `dday -delete <handle>` (patrz sekcja RODO).
+- Status liczony jest z **rangi** (pozycji wśród aktualnych wierszy), więc po
+  wycofaniu się uczestnika awans z listy rezerwowej widać od razu.
+
 Landing pobiera stan z `/api/count` (licznik zapisanych, pasek, lista rezerwowa,
 flaga `open` i daty). Bez API (np. GitHub Pages) strona degraduje się do wartości
 wpisanych na sztywno w `index.html`.
@@ -86,6 +115,7 @@ Serwer WWW:
 | `AGE_KEY_DATA` | *(puste)* | ten sam klucz przekazany base64 (ma pierwszeństwo; używane w kontenerze) |
 | `TOKEN_SECRET` | *(puste)* | wspólny sekret HMAC dla tokenów; musi być identyczny u bota |
 | `INTERNAL_TOKEN` | *(puste)* | bearer chroniący `/api/registered`; puste = endpoint wyłączony (404) |
+| `ADMIN_TOKEN` | *(puste)* | token chroniący `/admin`; puste = panel admina wyłączony (404) |
 | `REGISTRATION_OPEN` | *(puste)* | `1`/`true`/`yes` wymusza otwarte zapisy; inaczej decyduje bramka czasowa |
 | `REGISTRATION_OPEN_AT` | `2026-07-26 15:00` | moment otwarcia zapisów |
 | `EVENT_START_AT` | `2026-08-08 14:00` | początek wydarzenia |
@@ -144,8 +174,9 @@ make down   # zatrzymanie stacku
 
 `make up` sprawdza obecność kluczy age i `matrix.env`, a następnie zapisuje `.env`
 z: `AGE_KEY_DATA`, `AGE_PUB_DATA` (klucze base64 — plik 0600 byłby nieczytelny dla
-użytkownika `nonroot` w obrazie distroless), `INTERNAL_TOKEN` i `TOKEN_SECRET`
-(losowane raz i potem reużywane) oraz `REGISTRATION_OPEN` (domyślnie `1`).
+użytkownika `nonroot` w obrazie distroless), `INTERNAL_TOKEN`, `TOKEN_SECRET` i
+`ADMIN_TOKEN` (losowane raz i potem reużywane) oraz `REGISTRATION_OPEN`
+(domyślnie `1`).
 
 `docker-compose.yml` wystawia serwis `dday` przez Traefika na
 `dday.hs-ldz.pl` (entrypoint `websecure`, certresolver `myresolver`) i uruchamia
