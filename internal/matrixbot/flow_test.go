@@ -13,9 +13,9 @@ import (
 )
 
 // TestRegisterFlowEndToEnd drives the real Client.Run loop against a mock
-// Matrix homeserver and asserts the full "!register" flow:
+// Matrix homeserver and asserts the full "!start" flow:
 //
-//	login -> sync -> see !register from a user -> create a direct (DM) room
+//	login -> sync -> see !start from a user -> create a direct (DM) room
 //	inviting that user -> send a message containing a registration link whose
 //	token decrypts (with the private key) back to the sender's handle plus a
 //	fresh unix timestamp.
@@ -36,7 +36,7 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 		writeJSON(w, map[string]any{"access_token": "tok", "user_id": botMXID})
 	})
 
-	// sync state machine: prime -> deliver !register once -> quiet.
+	// sync state machine: prime -> deliver !start once -> quiet.
 	mux.HandleFunc("/_matrix/client/v3/sync", func(w http.ResponseWriter, r *http.Request) {
 		since := r.URL.Query().Get("since")
 		switch since {
@@ -54,7 +54,7 @@ func TestRegisterFlowEndToEnd(t *testing.T) {
 										"type":     "m.room.message",
 										"sender":   userMXID,
 										"event_id": "$e1",
-										"content":  map[string]any{"msgtype": "m.text", "body": "!register"},
+										"content":  map[string]any{"msgtype": "m.text", "body": "!start"},
 									},
 								},
 							},

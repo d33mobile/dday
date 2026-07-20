@@ -1,7 +1,9 @@
 // Command bot runs the D-Day Matrix bot.
 //
-// On "!register" it opens a private DM with the sender and sends a registration
-// link whose token is an age-encrypted timestamp (see internal/matrixbot).
+// On "!start" (legacy alias: "!register") it opens a private DM with the sender
+// and sends a link whose token is an age-encrypted timestamp (see
+// internal/matrixbot): a registration link for a newcomer, or a magic link to
+// the participant panel for someone who is already signed up.
 //
 // Config (from matrix.env / environment):
 //
@@ -11,8 +13,10 @@
 //	AGE_PUB_DATA        base64 of the SSH ed25519 public key (recipient); preferred
 //	AGE_PUB             SSH ed25519 public key file (recipient); fallback
 //	REGISTER_URL        base link the token is appended to
+//	PANEL_URL           base link of the participant panel; defaults to the
+//	                    origin of REGISTER_URL plus "/panel"
 //	TOKEN_SECRET        shared HMAC key authenticating the link token (must match web)
-//	ALLOWED_ROOMS       optional comma-separated room ids; if set, !register is
+//	ALLOWED_ROOMS       optional comma-separated room ids; if set, !start is
 //	                    only honoured in those rooms (unset = every room)
 //
 // Note: the bot reads plaintext rooms only (no E2E encryption), so keep the
@@ -55,11 +59,23 @@ func main() {
 	c.TokenSecret = os.Getenv("TOKEN_SECRET")
 	c.IsOpen = regwindow.Open
 
+	// Participant-panel base URL. PANEL_URL wins; otherwise it is derived from
+	// REGISTER_URL's origin, which is where the web service serves /panel. A
+	// REGISTER_URL without scheme/host leaves PanelBase empty, and the bot then
+	// falls back to the link-less "already signed up" reply instead of handing
+	// out a broken URL.
+	c.PanelBase = panelURL(registerURL)
+	if c.PanelBase == "" {
+		log.Printf("no PANEL_URL and REGISTER_URL has no usable origin; panel magic links disabled")
+	} else {
+		log.Printf("participant panel links point at %s", c.PanelBase)
+	}
+
 	// Optional allowlist: when ALLOWED_ROOMS is set (comma-separated room ids),
-	// the bot reacts to "!register" only in those rooms. Unset means everywhere.
+	// the bot reacts to "!start" only in those rooms. Unset means everywhere.
 	if rooms := strings.TrimSpace(os.Getenv("ALLOWED_ROOMS")); rooms != "" {
 		c.AllowedRooms = matrixbot.ParseAllowedRooms(rooms)
-		log.Printf("restricting !register to %d allowed room(s)", len(c.AllowedRooms))
+		log.Printf("restricting !start to %d allowed room(s)", len(c.AllowedRooms))
 	}
 
 	// When INTERNAL_TOKEN is set, ask the web service whether a handle is
@@ -115,6 +131,21 @@ func loadRecipient() (age.Recipient, error) {
 		return matrixbot.ParseRecipient(string(data))
 	}
 	return matrixbot.LoadRecipient(mustEnv("AGE_PUB"))
+}
+
+// panelURL resolves the base URL of the participant panel: the explicit
+// PANEL_URL env var, else the origin of registerURL with "/panel" appended. It
+// returns "" when neither is available (registerURL lacks a scheme/host), which
+// the caller treats as "panel magic links disabled".
+func panelURL(registerURL string) string {
+	if v := strings.TrimSpace(os.Getenv("PANEL_URL")); v != "" {
+		return v
+	}
+	origin, err := originOf(registerURL)
+	if err != nil {
+		return ""
+	}
+	return origin + "/panel"
 }
 
 // originOf extracts the scheme://host origin from a full URL.

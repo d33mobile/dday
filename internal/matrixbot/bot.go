@@ -1,6 +1,8 @@
 // Package matrixbot implements the D-Day Matrix bot: it listens for the
-// "!register" command and opens a private DM with the sender containing a
-// registration link whose token is an age-encrypted timestamp.
+// "!start" command (legacy alias: "!register") and opens a private DM with the
+// sender containing a private link whose token is an age-encrypted timestamp —
+// a registration link for a newcomer, a participant-panel magic link for
+// someone who is already signed up.
 //
 // The logic lives in this importable package (not in package main) so the
 // end-to-end test can drive the real code paths.
@@ -27,9 +29,9 @@ import (
 	"github.com/d33mobile/dday/internal/regwindow"
 )
 
-// defaultRateWindow is the minimum interval between two "!register" commands
+// defaultRateWindow is the minimum interval between two "!start" commands
 // from the same handle that the bot will act on. Further commands inside the
-// window are ignored (logged), so a user spamming "!register" gets a single DM.
+// window are ignored (logged), so a user spamming "!start" gets a single DM.
 const defaultRateWindow = 30 * time.Second
 
 // Client is a minimal Matrix client-server API client for the bot.
@@ -40,6 +42,7 @@ type Client struct {
 	HTTP        *http.Client  // HTTP client
 	Recipient   age.Recipient // age recipient used to encrypt the link token
 	LinkBase    string        // registration URL the token is appended to
+	PanelBase   string        // participant-panel URL the panel token is appended to
 	TokenSecret string        // shared HMAC key authenticating the link token
 	IsOpen      func() bool   // registration time gate; nil means always open
 
@@ -50,11 +53,11 @@ type Client struct {
 	CheckRegistered func(handle string) (number int, registered bool, err error)
 
 	// AllowedRooms, when non-empty, restricts which rooms Run reacts to
-	// "!register" in. An empty (or nil) set reacts everywhere — the default,
+	// "!start" in. An empty (or nil) set reacts everywhere — the default,
 	// unchanged behaviour. Populate it from the ALLOWED_ROOMS env var.
 	AllowedRooms map[string]bool
 
-	// RateWindow is the minimum interval between two "!register" from the same
+	// RateWindow is the minimum interval between two "!start" from the same
 	// handle that the bot acts on; commands inside the window are ignored. Zero
 	// uses defaultRateWindow.
 	RateWindow time.Duration
@@ -72,7 +75,7 @@ type Client struct {
 	// mu guards the anti-spam maps below.
 	mu       sync.Mutex
 	dmRooms  map[string]string    // handle -> cached DM room id (reused across commands)
-	lastSeen map[string]time.Time // handle -> last acted-on "!register" time
+	lastSeen map[string]time.Time // handle -> last acted-on "!start" time
 }
 
 // New returns a Client for the given homeserver.
@@ -106,7 +109,7 @@ func (c *Client) clock() time.Time {
 	return time.Now()
 }
 
-// roomAllowed reports whether Run should react to "!register" in roomID. With
+// roomAllowed reports whether Run should react to "!start" in roomID. With
 // no allowlist configured every room is allowed.
 func (c *Client) roomAllowed(roomID string) bool {
 	if len(c.AllowedRooms) == 0 {
@@ -115,7 +118,7 @@ func (c *Client) roomAllowed(roomID string) bool {
 	return c.AllowedRooms[roomID]
 }
 
-// rateLimited reports whether a "!register" from handle arrives too soon after
+// rateLimited reports whether a "!start" from handle arrives too soon after
 // the last one the bot acted on. On the accepted path it records the time so
 // the next command starts a fresh window. Safe for concurrent use.
 func (c *Client) rateLimited(handle string) bool {
@@ -198,7 +201,7 @@ func (c *Client) sync(since string, timeoutMS int) (*syncResp, error) {
 	return &out, nil
 }
 
-// Run drives the sync loop, reacting to "!register" until ctx is cancelled.
+// Run drives the sync loop, reacting to "!start" until ctx is cancelled.
 func (c *Client) Run(ctx context.Context) error {
 	// Prime with an initial sync so we only react to messages from now on,
 	// not to historical backlog.
@@ -210,7 +213,7 @@ func (c *Client) Run(ctx context.Context) error {
 	for roomID := range first.Rooms.Invite {
 		c.joinRoom(roomID)
 	}
-	log.Printf("listening for !register (bot is %s)", c.Self)
+	log.Printf("listening for !start (bot is %s)", c.Self)
 
 	for {
 		if ctx.Err() != nil {
@@ -240,59 +243,61 @@ func (c *Client) Run(ctx context.Context) error {
 				if ev.Type != "m.room.message" || ev.Content.MsgType != "m.text" {
 					continue
 				}
-				if ev.Sender == c.Self || !isRegisterCmd(ev.Content.Body) {
+				if ev.Sender == c.Self || !isStartCmd(ev.Content.Body) {
 					continue
 				}
-				log.Printf("!register from %s in %s", ev.Sender, roomID)
+				log.Printf("!start from %s in %s", ev.Sender, roomID)
 				if _, err := c.HandleRegister(roomID, ev.Sender); err != nil {
-					log.Printf("register for %s failed: %v", ev.Sender, err)
+					log.Printf("!start for %s failed: %v", ev.Sender, err)
 				}
 			}
 		}
 	}
 }
 
-func isRegisterCmd(body string) bool {
+// isStartCmd reports whether body's first word is the bot's command. "!start"
+// is the official command; "!register" stays accepted as a legacy alias,
+// because it was documented on the landing page before the rename and people
+// still have it in their muscle memory. Matching is case-insensitive and
+// ignores anything after the first word.
+func isStartCmd(body string) bool {
 	f := strings.Fields(strings.TrimSpace(body))
-	return len(f) > 0 && strings.EqualFold(f[0], "!register")
+	return len(f) > 0 && (strings.EqualFold(f[0], "!start") || strings.EqualFold(f[0], "!register"))
 }
 
-// HandleRegister reacts to a "!register" that arrived in originRoom from user.
+// HandleRegister reacts to a "!start" that arrived in originRoom from user.
 //
-// A private DM is opened for one reason only: to deliver a private registration
-// link. Every other outcome is answered publicly in originRoom, @-mentioning
-// the user, without spawning a DM:
+// A private DM is opened for one reason only: to deliver a private link. The
+// branches are:
 //
-//   - already registered: a public "you are already signed up, re-registration
-//     is not possible" reply (the participant number is not revealed in public);
+//   - already registered: a DM with the participant-panel magic link (where the
+//     user can check their status and withdraw), plus a public nudge in
+//     originRoom. If no panel link can be built (PanelBase unset or an encoding
+//     error) it degrades to a public "you are already signed up" reply, so the
+//     command never fails silently;
 //   - not open yet (per c.IsOpen): a public "sign-ups haven't started" reply
-//     carrying the start time;
+//     carrying the start time — no DM is opened;
 //   - open: a DM with the registration link, plus a public nudge back in
 //     originRoom pointing the user at their DMs.
 //
 // For the public branches an empty originRoom means the reply is only logged.
-// It returns the DM room id for the open branch, and "" for the public ones.
+// It returns the DM room id for the DM branches, and "" for the public ones.
 func (c *Client) HandleRegister(originRoom, user string) (string, error) {
-	// Per-handle rate limit: drop a burst of "!register" from the same user so a
+	// Per-handle rate limit: drop a burst of "!start" from the same user so a
 	// single command yields a single DM. Returns an empty room id, no error.
 	if c.rateLimited(user) {
-		log.Printf("!register from %s ignored (rate limited)", user)
+		log.Printf("!start from %s ignored (rate limited)", user)
 		return "", nil
 	}
 
 	// Already-registered wins over everything. Fail-open: on error we log and
-	// fall through to the normal flow, since the web POST dedupes anyway. The
-	// reply is public in originRoom — no DM is opened, and the participant
-	// number is deliberately omitted so it is not leaked in a channel.
+	// fall through to the normal flow, since the web POST dedupes anyway.
 	if c.CheckRegistered != nil {
-		_, registered, err := c.CheckRegistered(user)
+		number, registered, err := c.CheckRegistered(user)
 		if err != nil {
 			log.Printf("check registered for %s: %v (proceeding)", user, err)
 		} else if registered {
-			name := localpart(user)
-			plain := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", name)
-			html := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", mention(user))
-			return c.replyPublic(originRoom, plain, html)
+			return c.sendPanelLink(originRoom, user, number)
 		}
 	}
 
@@ -300,8 +305,8 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	// time — no DM is opened.
 	if c.IsOpen != nil && !c.IsOpen() {
 		name := localpart(user)
-		plain := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w %s. Wróć wtedy i napisz !register.", name, regwindow.OpenStartText())
-		html := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w <b>%s</b>. Wróć wtedy i napisz <code>!register</code>.", mention(user), regwindow.OpenStartText())
+		plain := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w %s. Wróć wtedy i napisz !start.", name, regwindow.OpenStartText())
+		html := fmt.Sprintf("Hej %s, zapisy jeszcze nie wystartowały — ruszają w <b>%s</b>. Wróć wtedy i napisz <code>!start</code>.", mention(user), regwindow.OpenStartText())
 		return c.replyPublic(originRoom, plain, html)
 	}
 
@@ -322,7 +327,51 @@ func (c *Client) HandleRegister(originRoom, user string) (string, error) {
 	return dmRoom, nil
 }
 
-// replyPublic sends a public reply into originRoom (the channel the "!register"
+// sendPanelLink handles the already-registered branch: it DMs user a magic link
+// to their participant panel (status + withdrawing) and nudges them publicly in
+// originRoom. The link is private, so delivering it by DM keeps the "a DM is
+// only ever opened to deliver a private link" rule; the participant number is
+// mentioned in the DM only, never in the channel.
+//
+// Every failure degrades to the old public "you are already signed up" reply
+// rather than an error: an unconfigured PanelBase or a token/DM problem must
+// not leave the user without an answer.
+func (c *Client) sendPanelLink(originRoom, user string, number int) (string, error) {
+	link, err := c.panelLink(user)
+	if err != nil {
+		log.Printf("panel link for %s: %v (falling back to public reply)", user, err)
+		return c.replyAlreadyRegistered(originRoom, user)
+	}
+	dmRoom, _, err := c.resolveDM(originRoom, user)
+	if err != nil {
+		log.Printf("resolve dm for %s: %v (falling back to public reply)", user, err)
+		return c.replyAlreadyRegistered(originRoom, user)
+	}
+
+	who := "Jesteś już zapisany 🎉"
+	if number > 0 {
+		who = fmt.Sprintf("Jesteś już zapisany 🎉 (#%d)", number)
+	}
+	plain := fmt.Sprintf("%s Oto link do Twojego panelu — możesz tam sprawdzić status i w razie czego wycofać udział: %s", who, link)
+	html := fmt.Sprintf("%s Oto link do Twojego panelu — możesz tam sprawdzić status i w razie czego wycofać udział:<br><a href=%q>otwórz panel</a>", who, link)
+	if err := c.sendHTML(dmRoom, plain, html); err != nil {
+		log.Printf("send panel link to %s: %v (falling back to public reply)", user, err)
+		return c.replyAlreadyRegistered(originRoom, user)
+	}
+	c.nudge(originRoom, dmRoom, user, "wysłałem Ci tam link do Twojego panelu.")
+	return dmRoom, nil
+}
+
+// replyAlreadyRegistered is the link-less fallback for the already-registered
+// branch: a public reply in originRoom that deliberately omits the participant
+// number so it is not leaked in a channel.
+func (c *Client) replyAlreadyRegistered(originRoom, user string) (string, error) {
+	plain := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", localpart(user))
+	html := fmt.Sprintf("Hej %s, jesteś już zapisany 🎉 Ponowna rejestracja nie jest możliwa.", mention(user))
+	return c.replyPublic(originRoom, plain, html)
+}
+
+// replyPublic sends a public reply into originRoom (the channel the "!start"
 // came from). When originRoom is unknown ("") it only logs — nothing is sent
 // and no DM is ever opened — so a command from an unknown context is a no-op
 // rather than spawning a private chat. It always returns ("", nil): the caller
@@ -345,7 +394,7 @@ func mention(user string) string {
 	return fmt.Sprintf("<a href=%q>%s</a>", "https://matrix.to/#/"+user, localpart(user))
 }
 
-// nudge posts a short public reply in originRoom (the channel the "!register"
+// nudge posts a short public reply in originRoom (the channel the "!start"
 // came from), @-mentioning the user and pointing them at their DMs. It is a
 // best-effort side channel: it is skipped when originRoom is unknown or is the
 // DM itself, and any send error is only logged.
@@ -372,8 +421,8 @@ func localpart(mxid string) string {
 	return s
 }
 
-// resolveDM decides which room the registration reply for user should go to,
-// given the room the "!register" arrived in.
+// resolveDM decides which room the private reply for user should go to,
+// given the room the "!start" arrived in.
 //
 //   - If originRoom is itself a 1:1 DM with user (exactly the bot and user are
 //     joined), that room is reused and isOrigin is true — the user wrote from

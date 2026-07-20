@@ -9,11 +9,12 @@ import (
 	"time"
 )
 
-// TestHandleRegisterAlreadyRegistered asserts that when CheckRegistered reports
-// the handle is already registered, the bot replies publicly in the origin room
-// with a "re-registration impossible" notice — it does NOT open a DM, does NOT
-// hand out a new link (no "?t="), and does NOT leak the participant number.
-func TestHandleRegisterAlreadyRegistered(t *testing.T) {
+// TestHandleRegisterAlreadyRegisteredNoPanel asserts the fallback of the
+// already-registered branch: with no PanelBase configured no magic link can be
+// built, so the bot replies publicly in the origin room with a
+// "re-registration impossible" notice — it does NOT open a DM, does NOT hand
+// out a link (no "?t="), and does NOT leak the participant number.
+func TestHandleRegisterAlreadyRegisteredNoPanel(t *testing.T) {
 	recipient, _ := genKeypair(t)
 
 	created := make(chan map[string]any, 1)

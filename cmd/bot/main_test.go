@@ -122,6 +122,24 @@ func TestOriginOf(t *testing.T) {
 	}
 }
 
+// TestPanelURL covers the three ways the participant-panel base is resolved:
+// an explicit PANEL_URL wins, otherwise it is derived from REGISTER_URL's
+// origin, and a REGISTER_URL without a scheme/host disables panel links ("").
+func TestPanelURL(t *testing.T) {
+	t.Setenv("PANEL_URL", "")
+	if got := panelURL("https://dday.hs-ldz.pl/register"); got != "https://dday.hs-ldz.pl/panel" {
+		t.Errorf("panelURL = %q; want the derived https://dday.hs-ldz.pl/panel", got)
+	}
+	if got := panelURL("not-a-url"); got != "" {
+		t.Errorf("panelURL = %q; want \"\" when REGISTER_URL has no origin", got)
+	}
+
+	t.Setenv("PANEL_URL", "  https://other.example/p  ")
+	if got := panelURL("https://dday.hs-ldz.pl/register"); got != "https://other.example/p" {
+		t.Errorf("panelURL = %q; want the explicit (trimmed) PANEL_URL", got)
+	}
+}
+
 func TestLoadRecipientFromEnvData(t *testing.T) {
 	pubLine := genPubKey(t)
 	t.Setenv("AGE_PUB_DATA", base64.StdEncoding.EncodeToString([]byte(pubLine)))

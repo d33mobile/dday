@@ -42,7 +42,7 @@ func TestRoomAllowed(t *testing.T) {
 }
 
 // TestRunIgnoresDisallowedRoom drives the real Run loop with an allowlist that
-// does NOT include the room the "!register" arrives in, and asserts the bot
+// does NOT include the room the "!register" (legacy alias) arrives in, and asserts the bot
 // takes no action: no DM is created and nothing is sent.
 func TestRunIgnoresDisallowedRoom(t *testing.T) {
 	recipient, _ := genKeypair(t)

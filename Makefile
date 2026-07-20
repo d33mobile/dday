@@ -77,5 +77,5 @@ matrix-hello: check ## Send "hello world" to the Matrix room
 matrix-send: check ## Send a custom message: make matrix-send MSG="..."
 	@MATRIX_ENV=$(MATRIX_ENV) ./scripts/send-matrix.sh "$(MSG)"
 
-bot: check-keys ## Run the !register bot (foreground)
+bot: check-keys ## Run the !start bot (foreground)
 	@set -a; . ./$(MATRIX_ENV); set +a; go run ./cmd/bot

@@ -22,6 +22,9 @@ func TestHandleRegisterClosed(t *testing.T) {
 	c := New(srv.URL)
 	c.Recipient = recipient
 	c.LinkBase = "https://dday.hs-ldz.pl/register"
+	// PanelBase is configured on purpose: the closed branch must stay a plain
+	// public reply, never a magic link, even when panel links are available.
+	c.PanelBase = "https://dday.hs-ldz.pl/panel"
 	c.TokenSecret = testSecret
 	c.IsOpen = func() bool { return false }
 	if err := c.Login("@ddaybot:mock", "secret"); err != nil {

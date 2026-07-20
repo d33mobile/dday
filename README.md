@@ -17,7 +17,7 @@ Dwie binarki Go (bez CGO), wspólny pakiet z datami i konfiguracją terminu:
 | Komponent | Ścieżka | Opis |
 |---|---|---|
 | Serwer WWW | `.` (`main.go`, `server.go`, `templates.go`) | landing + rejestracja; `index.html` i `privacy.html` są `go:embed`-owane w binarce |
-| Bot Matrix | `cmd/bot`, `internal/matrixbot` | nasłuchuje `!register`, wysyła DM z jednorazowym linkiem |
+| Bot Matrix | `cmd/bot`, `internal/matrixbot` | nasłuchuje `!start`, wysyła DM z prywatnym linkiem (rejestracja albo panel) |
 | Bramka czasowa i daty | `internal/regwindow` | jedyne źródło prawdy dla terminów; generuje polskie opisy dat |
 | Baza | `internal/store` | SQLite przez `modernc.org/sqlite` (czysty Go) |
 
@@ -30,12 +30,15 @@ Trasy serwera WWW:
 | `POST /register` | zapis (miejscowość + e-mail); tożsamość wyłącznie z tokenu |
 | `GET /api/count` | JSON: obłożenie miejsc + wszystkie daty i ich opisy (patrz niżej) |
 | `GET /api/registered?h=@user:hs` | wewnętrzne, dla bota; wymaga `Authorization: Bearer $INTERNAL_TOKEN`, bez tokenu 404 |
+| `GET /panel?t=…` | panel uczestnika dla ważnego magic linku: status + przycisk „Wycofaj udział" |
+| `POST /panel` | wycofanie udziału (tożsamość wyłącznie z tokenu) |
 | `GET /privacy` | polityka prywatności (`privacy.html`) |
 | `GET /healthz` | health check (używany też przez `dday -healthcheck`) |
 
 ## Jak działa rejestracja
 
-1. Użytkownik pisze `!register` do bota (DM albo pokój z allowlisty).
+1. Użytkownik pisze `!start` do bota (DM albo pokój z allowlisty). `!register` działa
+   nadal jako alias — komendą oficjalną (tą z landing page) jest `!start`.
 2. Bot sprawdza bramkę czasową i — jeśli ma `INTERNAL_TOKEN` — pyta
    `/api/registered`, czy ten handle już się zapisał.
 3. Bot generuje token: `{handle, issued}` zaszyfrowane kluczem age (odbiorcą jest
@@ -47,9 +50,24 @@ Trasy serwera WWW:
 6. Formularz zbiera miejscowość i e-mail; `POST` zapisuje rekord w SQLite i
    przydziela numer uczestnika (`AUTOINCREMENT`).
 7. Numery 1–20 to miejsca potwierdzone, 21–40 lista rezerwowa, powyżej — brak miejsc.
-8. Link jest jednorazowy: po zapisie ten sam link pokazuje potwierdzenie, a kolejny
-   `!register` jest odmawiany (`/api/registered`) — próba ponownego `POST`
-   kończy się stroną „Już zapisany", bez drugiego rekordu.
+8. Link jest jednorazowy: po zapisie ten sam link pokazuje potwierdzenie, a próba
+   ponownego `POST` kończy się stroną „Już zapisany", bez drugiego rekordu.
+
+## Panel uczestnika
+
+Kolejne `!start` od kogoś, kto jest już zapisany (`/api/registered`), nie jest odmową —
+bot wysyła w DM **magic link do panelu** (`PANEL_URL?t=<token>`), a na kanale zostawia
+tylko publiczny nudge „sprawdź prywatne wiadomości" (numeru uczestnika nie ujawnia publicznie).
+
+- Token panelu ma ten sam mechanizm co rejestracyjny (age + HMAC, **TTL 48 h**), ale niesie
+  inny *kind* (`panel` vs `reg`), objęty HMAC-em. Dzięki temu link rejestracyjny nie otworzy
+  panelu, a magic link do panelu nie pozwoli się zapisać.
+- W panelu widać nick, numer uczestnika i status (uczestnik / lista rezerwowa, pozycja).
+  Jedyną akcją jest **„Wycofaj udział"** — usuwa rekord i zwalnia miejsce (osoba z rezerwy awansuje).
+- Po wycofaniu można zapisać się ponownie: `!start` → bot widzi, że nie jesteś zapisany →
+  link rejestracyjny (o ile są miejsca).
+- Gdy `PANEL_URL` nie da się ustalić, bot degraduje się do dawnej publicznej odpowiedzi
+  „jesteś już zapisany", zamiast wysyłać zepsuty link.
 
 Landing pobiera stan z `/api/count` (licznik zapisanych, pasek, lista rezerwowa,
 flaga `open` i daty). Bez API (np. GitHub Pages) strona degraduje się do wartości
@@ -82,6 +100,7 @@ Bot Matrix (`cmd/bot`, konfiguracja zwykle w `matrix.env`):
 | `MATRIX_PASSWORD` | **wymagane** | hasło bota |
 | `MATRIX_ROOM` | *(puste)* | pokój używany przez skrypty `make matrix-hello` / `matrix-send` |
 | `REGISTER_URL` | `https://dday.hs-ldz.pl/` | baza linku rejestracyjnego (jej origin służy też do `/api/registered`) |
+| `PANEL_URL` | `origin(REGISTER_URL) + /panel` | baza magic linku do panelu uczestnika |
 | `AGE_PUB` | `config/dday_ed25519.pub` | klucz publiczny age, którym bot szyfruje tokeny |
 | `AGE_PUB_DATA` | *(puste)* | ten sam klucz base64 (ma pierwszeństwo) |
 | `TOKEN_SECRET` | *(puste)* | jak wyżej — musi zgadzać się z serwerem |

@@ -206,12 +206,29 @@ func RegisterLink(base, token string) string {
 // registerLink builds a link for "now" using the client's recipient/base,
 // embedding the sender's Matrix handle so the web server can predefine the nick.
 func (c *Client) registerLink(handle string) (string, error) {
+	return c.kindLink(c.LinkBase, KindReg, handle)
+}
+
+// panelLink builds a participant-panel magic link for "now" against PanelBase.
+// The token carries KindPanel, so it opens /panel and is rejected by /register.
+// An unset PanelBase is an error: callers fall back to a link-less reply rather
+// than handing out a broken URL.
+func (c *Client) panelLink(handle string) (string, error) {
+	if c.PanelBase == "" {
+		return "", fmt.Errorf("no panel base URL configured")
+	}
+	return c.kindLink(c.PanelBase, KindPanel, handle)
+}
+
+// kindLink encodes a token of the given kind for handle, issued now, and
+// appends it to base. It is the shared body of registerLink and panelLink.
+func (c *Client) kindLink(base, kind, handle string) (string, error) {
 	if c.Recipient == nil {
 		return "", fmt.Errorf("no age recipient configured")
 	}
-	tok, err := EncodeRegToken(c.Recipient, c.TokenSecret, RegPayload{Handle: handle, Issued: time.Now().Unix(), Kind: KindReg})
+	tok, err := EncodeRegToken(c.Recipient, c.TokenSecret, RegPayload{Handle: handle, Issued: time.Now().Unix(), Kind: kind})
 	if err != nil {
 		return "", err
 	}
-	return RegisterLink(c.LinkBase, tok), nil
+	return RegisterLink(base, tok), nil
 }
