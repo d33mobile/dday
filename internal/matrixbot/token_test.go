@@ -92,3 +92,55 @@ func TestRegisterLink(t *testing.T) {
 		t.Fatalf("expected & separator, got %q", got2)
 	}
 }
+
+// TestTokenKindRoundTrip asserts the kind survives encode/decode and that an
+// empty kind (a token minted before the field existed) normalizes to KindReg.
+func TestTokenKindRoundTrip(t *testing.T) {
+	r, id := genKeypair(t)
+
+	for _, kind := range []string{KindReg, KindPanel} {
+		token, err := EncodeRegToken(r, testSecret, RegPayload{Handle: "@alice:mock", Issued: time.Now().Unix(), Kind: kind})
+		if err != nil {
+			t.Fatalf("encode %s: %v", kind, err)
+		}
+		got, err := DecodeRegToken(id, testSecret, token)
+		if err != nil {
+			t.Fatalf("decode %s: %v", kind, err)
+		}
+		if got.Kind != kind {
+			t.Errorf("kind = %q; want %q", got.Kind, kind)
+		}
+	}
+
+	// Backward compatibility: no kind on the wire reads as "reg".
+	token, err := EncodeRegToken(r, testSecret, RegPayload{Handle: "@alice:mock", Issued: time.Now().Unix()})
+	if err != nil {
+		t.Fatalf("encode empty kind: %v", err)
+	}
+	got, err := DecodeRegToken(id, testSecret, token)
+	if err != nil {
+		t.Fatalf("decode empty kind: %v", err)
+	}
+	if got.Kind != KindReg {
+		t.Errorf("empty kind = %q; want %q", got.Kind, KindReg)
+	}
+}
+
+// TestTokenKindIsAuthenticated asserts the kind is covered by the HMAC: swapping
+// "reg" for "panel" in the plaintext payload invalidates the token, so a holder
+// of the (public) recipient key cannot upgrade a registration link into a panel
+// magic link.
+func TestTokenKindIsAuthenticated(t *testing.T) {
+	r, id := genKeypair(t)
+
+	// A payload whose MAC was computed for "reg" but which claims "panel".
+	mac := tokenMAC(testSecret, "@bob:mock", 1234567890, KindReg)
+	forged := `{"h":"@bob:mock","t":1234567890,"k":"panel","m":"` + mac + `"}`
+	token, err := EncryptToken(r, forged)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if _, err := DecodeRegToken(id, testSecret, token); err == nil {
+		t.Fatal("expected a token with a swapped kind to be rejected")
+	}
+}

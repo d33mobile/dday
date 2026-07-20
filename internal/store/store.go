@@ -91,6 +91,28 @@ func (s *Store) Number(handle string) (int, bool, error) {
 	}
 }
 
+// Rank returns the 1-based position of handle among the CURRENT registrations
+// ordered by id, and whether the handle is registered at all. Unlike Number
+// (the immutable AUTOINCREMENT id shown to the participant), the rank shifts
+// down when an earlier registration is deleted — that is what promotes the
+// first waiting-list entry once a confirmed participant withdraws.
+func (s *Store) Rank(handle string) (int, bool, error) {
+	var rank int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM registrations
+		WHERE id <= (SELECT id FROM registrations WHERE matrix_handle = ?)`,
+		handle).Scan(&rank)
+	switch {
+	case err != nil:
+		return 0, false, err
+	case rank == 0:
+		// The subquery yielded NULL: no row for this handle, so nothing counted.
+		return 0, false, nil
+	default:
+		return rank, true, nil
+	}
+}
+
 // Email returns the stored e-mail address for handle. It is used to verify
 // that the web layer persists the normalized address rather than the raw form
 // submission. A missing handle yields sql.ErrNoRows.

@@ -106,11 +106,24 @@ func (e *testEnv) token(t *testing.T, handle string) string {
 	return e.tokenAt(t, handle, time.Now().Unix())
 }
 
-// tokenAt mints a token with an explicit Issued time, so tests can exercise the
-// TTL (expired / future-dated links).
+// tokenAt mints a registration token with an explicit Issued time, so tests can
+// exercise the TTL (expired / future-dated links).
 func (e *testEnv) tokenAt(t *testing.T, handle string, issued int64) string {
 	t.Helper()
-	tok, err := matrixbot.EncodeRegToken(e.recipient, testTokenSecret, matrixbot.RegPayload{Handle: handle, Issued: issued})
+	return e.tokenKindAt(t, handle, matrixbot.KindReg, issued)
+}
+
+// tokenKind mints a token of the given kind (matrixbot.KindReg / KindPanel) for
+// "now", so tests can check that each endpoint only accepts its own kind.
+func (e *testEnv) tokenKind(t *testing.T, handle, kind string) string {
+	t.Helper()
+	return e.tokenKindAt(t, handle, kind, time.Now().Unix())
+}
+
+func (e *testEnv) tokenKindAt(t *testing.T, handle, kind string, issued int64) string {
+	t.Helper()
+	tok, err := matrixbot.EncodeRegToken(e.recipient, testTokenSecret,
+		matrixbot.RegPayload{Handle: handle, Issued: issued, Kind: kind})
 	if err != nil {
 		t.Fatalf("encode token: %v", err)
 	}
@@ -126,7 +139,12 @@ func (e *testEnv) get(t *testing.T, path string) *httptest.ResponseRecorder {
 
 func (e *testEnv) post(t *testing.T, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(form.Encode()))
+	return e.postTo(t, "/register", form)
+}
+
+func (e *testEnv) postTo(t *testing.T, path string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)

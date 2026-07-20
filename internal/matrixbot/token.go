@@ -24,9 +24,11 @@ import (
 //
 //   - Confidentiality comes from age: only the holder of the private key can
 //     decrypt the payload.
-//   - Authenticity comes from an HMAC-SHA256 over (handle, issued) keyed by the
-//     shared TOKEN_SECRET. On decode we recompute the MAC and compare it
-//     constant-time; a wrong or missing MAC is rejected.
+//   - Authenticity comes from an HMAC-SHA256 over (handle, issued, kind) keyed
+//     by the shared TOKEN_SECRET. On decode we recompute the MAC and compare it
+//     constant-time; a wrong or missing MAC is rejected. Because the kind is
+//     covered by the MAC, a registration token cannot be re-labelled as a panel
+//     token (or vice versa) without the secret.
 //
 // The age recipient (the SSH .pub key) is only needed to ENCRYPT to the web
 // server, so it is not a secret — leaking it does NOT let an attacker forge a
@@ -38,21 +40,43 @@ import (
 //
 //	echo '{"h":"@user:hs","t":1234567890,"m":"<hmac>"}' | age -e -i key | base64 -w 0
 
-// RegPayload is the decrypted content of a registration token: the Matrix handle
-// of the sender, the unix time the token was issued, and MAC — a base64
-// HMAC-SHA256 over (Handle, Issued) keyed by the shared TOKEN_SECRET.
+// Token kinds. The kind scopes a token to one endpoint: a registration link
+// cannot open the participant panel and a panel magic link cannot register.
+const (
+	// KindReg is a registration link (GET/POST /register).
+	KindReg = "reg"
+	// KindPanel is a participant-panel magic link (GET/POST /panel).
+	KindPanel = "panel"
+)
+
+// RegPayload is the decrypted content of a token: the Matrix handle of the
+// sender, the unix time the token was issued, the token Kind, and MAC — a base64
+// HMAC-SHA256 over (Handle, Issued, Kind) keyed by the shared TOKEN_SECRET.
 type RegPayload struct {
 	Handle string `json:"h"`
 	Issued int64  `json:"t"`
+	Kind   string `json:"k,omitempty"`
 	MAC    string `json:"m,omitempty"`
 }
 
-// tokenMAC returns the base64 HMAC-SHA256 of the canonical (handle, issued)
-// representation keyed by secret. The canonical form is "handle\nissued", so the
-// two fields cannot be ambiguously concatenated.
-func tokenMAC(secret, handle string, issued int64) string {
+// NormalizeKind maps an empty kind to KindReg. Tokens issued before the kind
+// field existed carry no "k", so treating empty as "reg" keeps those links
+// working; normalizing on BOTH the encode and decode side (before the MAC is
+// computed) keeps the MAC of {} and {"k":"reg"} identical.
+func NormalizeKind(kind string) string {
+	if kind == "" {
+		return KindReg
+	}
+	return kind
+}
+
+// tokenMAC returns the base64 HMAC-SHA256 of the canonical (handle, issued,
+// kind) representation keyed by secret. The canonical form is
+// "handle\nissued\nkind", so the fields cannot be ambiguously concatenated and
+// the kind cannot be swapped without invalidating the MAC.
+func tokenMAC(secret, handle string, issued int64, kind string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%s\n%d", handle, issued)
+	fmt.Fprintf(mac, "%s\n%d\n%s", handle, issued, NormalizeKind(kind))
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
@@ -135,10 +159,11 @@ func DecryptToken(id age.Identity, token string) (string, error) {
 	return string(data), nil
 }
 
-// EncodeRegToken stamps p with an HMAC over (Handle, Issued) keyed by secret,
-// marshals it to JSON and produces an age-encrypted, base64 token.
+// EncodeRegToken stamps p with an HMAC over (Handle, Issued, Kind) keyed by
+// secret, marshals it to JSON and produces an age-encrypted, base64 token. An
+// empty Kind is left empty on the wire but MACed as KindReg.
 func EncodeRegToken(r age.Recipient, secret string, p RegPayload) (string, error) {
-	p.MAC = tokenMAC(secret, p.Handle, p.Issued)
+	p.MAC = tokenMAC(secret, p.Handle, p.Issued, p.Kind)
 	b, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -147,8 +172,10 @@ func EncodeRegToken(r age.Recipient, secret string, p RegPayload) (string, error
 }
 
 // DecodeRegToken reverses EncodeRegToken using the private identity, then
-// verifies the HMAC over (Handle, Issued) keyed by secret in constant time. A
-// missing or mismatching MAC (e.g. a forged or old-format token) is rejected.
+// verifies the HMAC over (Handle, Issued, Kind) keyed by secret in constant
+// time. A missing or mismatching MAC (e.g. a forged or old-format token) is
+// rejected. The returned Kind is normalized, so a pre-kind token reads as
+// KindReg; callers compare it against the kind their endpoint expects.
 func DecodeRegToken(id age.Identity, secret, token string) (RegPayload, error) {
 	plain, err := DecryptToken(id, token)
 	if err != nil {
@@ -158,10 +185,11 @@ func DecodeRegToken(id age.Identity, secret, token string) (RegPayload, error) {
 	if err := json.Unmarshal([]byte(plain), &p); err != nil {
 		return RegPayload{}, fmt.Errorf("unmarshal payload: %w", err)
 	}
-	want := tokenMAC(secret, p.Handle, p.Issued)
+	want := tokenMAC(secret, p.Handle, p.Issued, p.Kind)
 	if !hmac.Equal([]byte(want), []byte(p.MAC)) {
 		return RegPayload{}, fmt.Errorf("invalid token authentication")
 	}
+	p.Kind = NormalizeKind(p.Kind)
 	return p, nil
 }
 
@@ -181,7 +209,7 @@ func (c *Client) registerLink(handle string) (string, error) {
 	if c.Recipient == nil {
 		return "", fmt.Errorf("no age recipient configured")
 	}
-	tok, err := EncodeRegToken(c.Recipient, c.TokenSecret, RegPayload{Handle: handle, Issued: time.Now().Unix()})
+	tok, err := EncodeRegToken(c.Recipient, c.TokenSecret, RegPayload{Handle: handle, Issued: time.Now().Unix(), Kind: KindReg})
 	if err != nil {
 		return "", err
 	}

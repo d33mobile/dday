@@ -76,6 +76,16 @@ type resultView struct {
 	Detail      string
 }
 
+// panelView backs the participant panel page: identity, current standing and
+// the token that authorizes the single action (withdrawal).
+type panelView struct {
+	Title       string
+	Nick        string
+	Token       string
+	Number      int
+	WaitlistPos int // waiting-list position; 0 for a confirmed participant
+}
+
 // newMux builds the HTTP handler with every route, wrapped in the security
 // middleware. It is the single place both main() and the tests construct.
 func newMux(d deps) http.Handler {
@@ -87,6 +97,7 @@ func newMux(d deps) http.Handler {
 	})
 
 	mux.HandleFunc("/register", d.handleRegister)
+	mux.HandleFunc("/panel", d.handlePanel)
 	mux.HandleFunc("/api/count", d.handleCount)
 	mux.HandleFunc("/api/registered", d.handleRegistered)
 	mux.HandleFunc("/privacy", d.handlePrivacy)
@@ -158,7 +169,7 @@ func (d deps) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 func (d deps) registerGet(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("t")
-	payload, ok := d.decode(w, token)
+	payload, ok := d.decode(w, token, matrixbot.KindReg)
 	if !ok {
 		return
 	}
@@ -211,7 +222,7 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.PostFormValue("t")
 	// The token is the source of truth for identity, never the form fields.
-	payload, ok := d.decode(w, token)
+	payload, ok := d.decode(w, token, matrixbot.KindReg)
 	if !ok {
 		return
 	}
@@ -261,25 +272,136 @@ func (d deps) registerPost(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrDuplicate):
 		// Neutral wording — an existing registration may be confirmed or on the
-		// waiting list; either way the link is spent.
-		v := resultView{Title: "Już zapisany", Nick: nick, Number: number}
-		if number > d.seatLimit {
-			v.WaitlistPos = number - d.seatLimit
+		// waiting list; either way the link is spent. The status comes from the
+		// current rank, so a withdrawal ahead of this handle is reflected.
+		rank, _, rerr := d.store.Rank(handle)
+		if rerr != nil {
+			d.serverError(w, "rank", rerr)
+			return
 		}
-		d.renderResult(w, "duplicate", v)
+		d.renderResult(w, "duplicate", resultView{Title: "Już zapisany", Nick: nick,
+			Number: number, WaitlistPos: d.waitlistPos(rank)})
 	case errors.Is(err, store.ErrFull):
 		d.renderMessage(w, http.StatusOK, "Brak miejsc",
 			"Niestety, brak wolnych miejsc.",
 			"Lista uczestników i lista rezerwowa zostały wyczerpane.")
 	case err != nil:
 		d.serverError(w, "register", err)
-	case number > d.seatLimit:
-		// Confirmed seats were full: this registration landed on the waiting list.
-		d.renderResult(w, "waitlist", resultView{Title: "Lista rezerwowa", Nick: nick,
-			Number: number, WaitlistPos: number - d.seatLimit})
 	default:
+		// The new row is the last one, so its rank is the current row count.
+		rank, cerr := d.store.Count()
+		if cerr != nil {
+			d.serverError(w, "count", cerr)
+			return
+		}
+		if pos := d.waitlistPos(rank); pos > 0 {
+			// Confirmed seats were full: this registration joined the waiting list.
+			d.renderResult(w, "waitlist", resultView{Title: "Lista rezerwowa", Nick: nick,
+				Number: number, WaitlistPos: pos})
+			return
+		}
 		d.renderResult(w, "success", resultView{Title: "Zapisano", Nick: nick, Number: number})
 	}
+}
+
+// waitlistPos maps a rank (position among current registrations, ordered by id)
+// to a waiting-list position, or 0 for a confirmed participant. Status is
+// derived from the rank rather than the participant number, so when someone
+// withdraws everyone behind them moves up a place.
+func (d deps) waitlistPos(rank int) int {
+	if rank > d.seatLimit {
+		return rank - d.seatLimit
+	}
+	return 0
+}
+
+// handlePanel dispatches the participant panel: GET renders it, POST performs
+// the single available action (withdrawing from the event).
+func (d deps) handlePanel(w http.ResponseWriter, r *http.Request) {
+	if !d.ready() {
+		d.renderMessage(w, http.StatusServiceUnavailable, "Panel chwilowo niedostępny",
+			"Panel uczestnika jest tymczasowo niedostępny.",
+			"Spróbuj ponownie za chwilę lub napisz na czacie Matrix.")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		d.panelGet(w, r)
+	case http.MethodPost:
+		d.panelPost(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// notRegistered is the neutral page shown when the panel token is valid but the
+// handle has no registration (never signed up, or already withdrawn).
+func (d deps) notRegistered(w http.ResponseWriter) {
+	d.renderMessage(w, http.StatusOK, "Nie jesteś zapisany",
+		"Nie jesteś zapisany na D-Day.",
+		"Napisz `!start` do bota na Matrixie, żeby się zapisać.")
+}
+
+func (d deps) panelGet(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("t")
+	payload, ok := d.decode(w, token, matrixbot.KindPanel)
+	if !ok {
+		return
+	}
+	v, ok := d.panelView(w, payload.Handle, token)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "panel", v); err != nil {
+		log.Printf("render panel: %v", err)
+	}
+}
+
+// panelView assembles the panel data for handle, or renders the "not
+// registered" page and reports ok=false. The participant number stays the
+// immutable row id; the confirmed/waiting-list status comes from the rank.
+func (d deps) panelView(w http.ResponseWriter, handle, token string) (panelView, bool) {
+	number, registered, err := d.store.Number(handle)
+	if err != nil {
+		d.serverError(w, "number", err)
+		return panelView{}, false
+	}
+	if !registered {
+		d.notRegistered(w)
+		return panelView{}, false
+	}
+	rank, _, err := d.store.Rank(handle)
+	if err != nil {
+		d.serverError(w, "rank", err)
+		return panelView{}, false
+	}
+	return panelView{Title: "Twój panel", Nick: nickFromHandle(handle), Token: token,
+		Number: number, WaitlistPos: d.waitlistPos(rank)}, true
+}
+
+func (d deps) panelPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// The token is the source of truth for identity, never the form fields.
+	payload, ok := d.decode(w, r.PostFormValue("t"), matrixbot.KindPanel)
+	if !ok {
+		return
+	}
+	deleted, err := d.store.Delete(payload.Handle)
+	if err != nil {
+		d.serverError(w, "delete", err)
+		return
+	}
+	if !deleted {
+		d.notRegistered(w)
+		return
+	}
+	d.renderResult(w, "panel_done", resultView{Title: "Udział wycofany",
+		Nick: nickFromHandle(payload.Handle)})
 }
 
 func (d deps) handleCount(w http.ResponseWriter, r *http.Request) {
@@ -380,8 +502,11 @@ func (d deps) handlePrivacy(w http.ResponseWriter, r *http.Request) {
 	d.serveStatic(w, "privacy.html")
 }
 
-// decode validates a token; on failure it writes a 400 page and returns ok=false.
-func (d deps) decode(w http.ResponseWriter, token string) (matrixbot.RegPayload, bool) {
+// decode validates a token and checks it was issued for wantKind; on failure it
+// writes a 400 page and returns ok=false. The kind is covered by the token's
+// HMAC, so a registration link presented to /panel (or a panel link presented to
+// /register) is rejected with a deliberately vague "Nieprawidłowy link".
+func (d deps) decode(w http.ResponseWriter, token, wantKind string) (matrixbot.RegPayload, bool) {
 	if strings.TrimSpace(token) == "" {
 		d.renderMessage(w, http.StatusBadRequest, "Nieprawidłowy link",
 			"Brak tokenu rejestracji.",
@@ -401,6 +526,14 @@ func (d deps) decode(w http.ResponseWriter, token string) (matrixbot.RegPayload,
 	if elapsed > int64(tokenTTL/time.Second) || elapsed < -int64(tokenFutureSkew/time.Second) {
 		d.renderMessage(w, http.StatusBadRequest, "Link wygasł",
 			"Ten link rejestracyjny wygasł.",
+			"Poproś bota o nowy link na czacie Matrix.")
+		return matrixbot.RegPayload{}, false
+	}
+	// Kind scoping: the token must have been minted for this endpoint. The
+	// message stays generic so it does not reveal which link the visitor holds.
+	if matrixbot.NormalizeKind(payload.Kind) != matrixbot.NormalizeKind(wantKind) {
+		d.renderMessage(w, http.StatusBadRequest, "Nieprawidłowy link",
+			"Ten link jest nieprawidłowy.",
 			"Poproś bota o nowy link na czacie Matrix.")
 		return matrixbot.RegPayload{}, false
 	}

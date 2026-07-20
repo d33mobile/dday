@@ -163,3 +163,52 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("delete(unknown) = (%v, %v); want (false, nil)", deleted, err)
 	}
 }
+
+// TestRank covers the rank lookup that drives participant-vs-waiting-list
+// status: ranks are 1-based positions ordered by id, an unknown handle reports
+// ok=false, and deleting a row shifts everyone behind it up one place while
+// their participant numbers (ids) stay put.
+func TestRank(t *testing.T) {
+	s := openTest(t)
+	for _, h := range []string{"@a:hs.org", "@b:hs.org", "@c:hs.org"} {
+		if _, err := s.Register(h, "x", "Łódź", "x@example.com", 20); err != nil {
+			t.Fatalf("register %s: %v", h, err)
+		}
+	}
+
+	wantRank := func(handle string, want int) {
+		t.Helper()
+		rank, ok, err := s.Rank(handle)
+		if err != nil {
+			t.Fatalf("rank %s: %v", handle, err)
+		}
+		if !ok || rank != want {
+			t.Errorf("rank(%s) = (%d, %v); want (%d, true)", handle, rank, ok, want)
+		}
+	}
+	wantRank("@a:hs.org", 1)
+	wantRank("@b:hs.org", 2)
+	wantRank("@c:hs.org", 3)
+
+	// An unknown handle has no rank.
+	if rank, ok, err := s.Rank("@ghost:hs.org"); err != nil || ok || rank != 0 {
+		t.Errorf("rank(unknown) = (%d, %v, %v); want (0, false, nil)", rank, ok, err)
+	}
+
+	// Deleting the first registration promotes the rest by one place.
+	if _, err := s.Delete("@a:hs.org"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	wantRank("@b:hs.org", 1)
+	wantRank("@c:hs.org", 2)
+
+	// The participant number (id) is unaffected by the shift.
+	if number, ok, err := s.Number("@c:hs.org"); err != nil || !ok || number != 3 {
+		t.Errorf("number(@c) = (%d, %v, %v); want (3, true, nil)", number, ok, err)
+	}
+
+	// A deleted handle loses its rank.
+	if rank, ok, err := s.Rank("@a:hs.org"); err != nil || ok || rank != 0 {
+		t.Errorf("rank(deleted) = (%d, %v, %v); want (0, false, nil)", rank, ok, err)
+	}
+}

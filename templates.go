@@ -30,6 +30,10 @@ input[readonly]{color:var(--muted);cursor:not-allowed}
   margin-top:1.4rem;padding:.85rem 2rem;border-radius:11px;border:1px solid transparent;cursor:pointer;text-align:center;
   text-decoration:none;background:linear-gradient(120deg,var(--accent),var(--accent2));color:#04140a}
 .btn:hover{filter:brightness(1.05)}
+.btn-danger{background:none;border-color:rgba(255,80,80,.45);color:#ff8a8a}
+.btn-danger:hover{background:rgba(255,80,80,.1);filter:none}
+.status{text-align:center;font-size:.95rem;color:var(--muted);margin-bottom:.4rem}
+.status b{color:var(--fg)}
 .err{color:#ff8a8a;font-size:.9rem;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.25);
   border-radius:10px;padding:.7rem .85rem;margin-bottom:.6rem}
 .foot{margin-top:1.6rem;font-size:.78rem;color:var(--muted)}
@@ -83,6 +87,25 @@ const templatesSrc = `
 <div class="big">#{{.WaitlistPos}}</div>{{else}}<p>Jesteś już zapisany 🎉 Twój numer uczestnika:</p>
 <div class="big">#{{.Number}}</div>{{end}}
 <p>Nie musisz robić nic więcej, <b>{{.Nick}}</b>.</p>
+{{template "foot" .}}{{end}}
+
+{{define "panel"}}{{template "head" .}}
+<p>Cześć <b>{{.Nick}}</b>! To Twój panel uczestnika D-Day.</p>
+<p class="status">Twój numer uczestnika:</p>
+<div class="big">#{{.Number}}</div>
+{{if .WaitlistPos}}<p class="status">Status: <b>lista rezerwowa</b>, pozycja #{{.WaitlistPos}}. Damy znać przez czat Matrix, jeśli zwolni się miejsce.</p>
+{{else}}<p class="status">Status: <b>uczestnik</b> — masz potwierdzone miejsce.</p>{{end}}
+<form method="POST" action="/panel">
+<input type="hidden" name="t" value="{{.Token}}">
+<button class="btn btn-danger" type="submit">Wycofaj udział</button>
+</form>
+<p class="foot" style="margin-top:1.2rem">Wycofanie udziału usuwa Twoje zgłoszenie i zwalnia miejsce dla osoby z listy rezerwowej.</p>
+{{template "foot" .}}{{end}}
+
+{{define "panel_done"}}{{template "head" .}}
+<p style="font-size:1.05rem">Udział wycofany.</p>
+<p>Twoje zgłoszenie zostało usunięte, <b>{{.Nick}}</b>. Miejsce wraca do puli — jeśli ktoś czeka na liście rezerwowej, awansuje.</p>
+<p>Jeśli zmienisz zdanie, możesz zapisać się ponownie — napisz <b>!start</b> do bota na Matrixie (o ile będą jeszcze wolne miejsca).</p>
 {{template "foot" .}}{{end}}
 
 {{define "message"}}{{template "head" .}}
