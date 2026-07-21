@@ -35,10 +35,11 @@ services:
       AGE_KEY_DATA: ${AGE_KEY_DATA:-}
       # SQLite DB path on the persistent volume.
       DB_PATH: /data/dday.db
-      # Registration time gate, sourced from .env (not hardcoded). `make up` writes
-      # REGISTRATION_OPEN=1 there, forcing registration open NOW; set it to 0 or
-      # delete the line to fall back to the built-in time gate (the moment
-      # REGISTRATION_OPEN_AT names). Empty here means "unset" → time gate.
+      # Optional override of the registration time gate, sourced from .env (not
+      # hardcoded). `make up` writes it EMPTY by default, which means "unset" →
+      # the built-in time gate rules and registration opens by itself at the
+      # moment REGISTRATION_OPEN_AT names (evaluated per request, no restart).
+      # Set 1 to force it open now or 0 to force it closed — testing only.
       REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
       # Event dates — the single source of truth for the site, the bot and the
       # landing page (see internal/regwindow). Unset → built-in defaults.
@@ -86,9 +87,10 @@ services:
       # inside the image. Override with the public key passed BY VALUE as base64;
       # the bot prefers AGE_PUB_DATA over AGE_PUB. `make up` writes it into .env.
       AGE_PUB_DATA: ${AGE_PUB_DATA:-}
-      # Same time gate as the web service, sourced from .env. `make up` writes
-      # REGISTRATION_OPEN=1 (open now); set 0 or delete the .env line to fall back
-      # to the built-in time gate (the moment REGISTRATION_OPEN_AT names).
+      # Same optional override as the web service, sourced from .env. `make up`
+      # leaves it empty → the built-in time gate rules and the bot starts handing
+      # out links by itself at REGISTRATION_OPEN_AT (evaluated per command, no
+      # restart). Set 1 to force open or 0 to force closed — testing only.
       REGISTRATION_OPEN: ${REGISTRATION_OPEN:-}
       # Same date configuration as the web service, so the bot's "not open yet"
       # reply states exactly the same moment.

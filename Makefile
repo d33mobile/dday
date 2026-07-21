@@ -34,11 +34,14 @@ up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
 	 adm=$$(grep -E '^ADMIN_TOKEN=' .env 2>/dev/null | head -n1 | cut -d= -f2-); \
 	 if [ -z "$$adm" ]; then adm=$$(openssl rand -hex 32); echo "generated new ADMIN_TOKEN"; \
 	 else echo "reusing existing ADMIN_TOKEN from .env"; fi; \
-	 ro=$$(grep -E '^REGISTRATION_OPEN=' .env 2>/dev/null | head -n1 | cut -d= -f2-); \
-	 if [ -z "$$ro" ]; then ro=1; echo "defaulting REGISTRATION_OPEN=1 (registration OPEN now)"; \
-	 else echo "reusing existing REGISTRATION_OPEN=$$ro from .env"; fi; \
-	 { printf '# REGISTRATION_OPEN=1 keeps registration OPEN now; set 0 or delete this\n'; \
-	   printf '# line to fall back to the built-in time gate (REGISTRATION_OPEN_AT).\n'; \
+	 ro=$$(grep -E '^REGISTRATION_OPEN=' .env 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '[:space:]'); \
+	 if [ -z "$$ro" ]; then echo "REGISTRATION_OPEN left empty — registration opens AUTOMATICALLY at REGISTRATION_OPEN_AT"; \
+	 else echo "reusing explicit REGISTRATION_OPEN=$$ro from .env (operator override)"; fi; \
+	 { printf '# REGISTRATION_OPEN is an OPTIONAL override, only for testing:\n'; \
+	   printf '#   empty (this default) = automatic time gate — registration opens by\n'; \
+	   printf '#                          itself at REGISTRATION_OPEN_AT, no restart needed\n'; \
+	   printf '#   1                    = force registration OPEN right now\n'; \
+	   printf '#   0                    = force registration CLOSED\n'; \
 	   printf 'REGISTRATION_OPEN=%s\n' "$$ro"; \
 	   printf 'AGE_KEY_DATA=%s\n' "$$(base64 < config/dday_ed25519 | tr -d '\n')"; \
 	   printf 'AGE_PUB_DATA=%s\n' "$$(base64 < config/dday_ed25519.pub | tr -d '\n')"; \
@@ -48,6 +51,12 @@ up: ## Start via docker compose (Traefik on dday.hs-ldz.pl)
 	   printf '# The URL contains a secret — do not paste it publicly. Empty = /admin disabled (404).\n'; \
 	   printf 'ADMIN_TOKEN=%s\n' "$$adm"; } > .env
 	@echo "wrote .env (REGISTRATION_OPEN + AGE_KEY_DATA + AGE_PUB_DATA + INTERNAL_TOKEN + TOKEN_SECRET + ADMIN_TOKEN)"
+	@ro=$$(grep -E '^REGISTRATION_OPEN=' .env | head -n1 | cut -d= -f2- | tr -d '[:space:]'); \
+	 case "$$ro" in \
+	   "") echo "registration mode: AUTO — opens by itself at REGISTRATION_OPEN_AT (no override set)";; \
+	   0|f|F|false|False|FALSE) echo "registration mode: FORCED CLOSED (REGISTRATION_OPEN=$$ro) — the time gate is ignored";; \
+	   *) echo "registration mode: FORCED OPEN (REGISTRATION_OPEN=$$ro) — the time gate is ignored";; \
+	 esac
 	docker compose up -d --build
 
 down: ## Stop the compose stack

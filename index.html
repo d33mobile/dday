@@ -91,9 +91,23 @@
   var EVENT    = Date.UTC(2026, 7,  8, 12, 0, 0); // 14:00 Warsaw == 12:00 UTC
 
   // apiOpen stays null until /api/count answers, then holds its `open` flag.
-  // On static hosting (e.g. GitHub Pages, no API) it never resolves and the
-  // clock alone (now >= REG_OPEN) decides whether registration is open.
+  // Once the API has ever answered it WINS over the local clock: the server is
+  // the source of truth (it also honours a forced REGISTRATION_OPEN=0). On
+  // static hosting (e.g. GitHub Pages, no API) it never resolves and the clock
+  // alone (now >= REG_OPEN) decides. Because the API wins, the page must keep
+  // polling /api/count (see POLL_MS below) to notice registration opening.
   var apiOpen = null;
+
+  // How often the page re-reads /api/count: refreshes the open flag, the seat
+  // counters and the dates, so an open page flips by itself — no reload.
+  var POLL_MS = 60000;
+
+  // Assigned by the counter block below; declared here because tick() calls it
+  // the instant the countdown to REG_OPEN crosses zero.
+  var refreshCount = function(){};
+  // crossed guards that immediate re-fetch so it fires once per crossing, not
+  // on every one-second tick. Recomputed whenever the API moves REG_OPEN.
+  var crossed = Date.now() >= REG_OPEN;
 
   var d=document.getElementById('d'),h=document.getElementById('h'),
       m=document.getElementById('m'),s=document.getElementById('s'),
@@ -141,7 +155,7 @@
   // ones from /api/count (rendered server-side by internal/regwindow, so the
   // Polish wording is produced in exactly one place).
   function applyDates(j,lim,wl){
-    if(j.openAt)REG_OPEN=j.openAt*1000;
+    if(j.openAt){REG_OPEN=j.openAt*1000;crossed=Date.now()>=REG_OPEN;}
     if(j.eventStartAt)EVENT=j.eventStartAt*1000;
     setText('event-badge',j.eventBadge);
     if(j.eventShort)setLead(document.getElementById('when-date'),j.eventShort);
@@ -157,8 +171,12 @@
 
   function tick(){
     var now=Date.now();
-    // Prefer the API's open flag; fall back to the clock when it's absent.
-    var isOpen = apiOpen===true || now>=REG_OPEN;
+    // The moment the countdown to REG_OPEN hits zero, ask the server straight
+    // away instead of waiting up to POLL_MS — the flip should feel instant.
+    if(!crossed&&now>=REG_OPEN){crossed=true;refreshCount();}
+    // The API wins whenever it has ever answered (it knows about a forced
+    // REGISTRATION_OPEN=0 too); the clock is the no-API fallback.
+    var isOpen = (apiOpen!==null) ? apiOpen : (now>=REG_OPEN);
     // Once registration is open the "Zapisy od" tile is redundant — hide it.
     // The "Jak się zapisać" steps only make sense once open — show them then.
     var regFrom=document.getElementById('regfrom');
@@ -191,9 +209,11 @@
   tick();
   setInterval(tick,1000);
 
-  // Registered-seats counter — pulls same-origin /api/count (allowed by CSP
-  // connect-src 'self'). On static hosting (e.g. GitHub Pages) the endpoint is
-  // absent: the block degrades to a "—" placeholder, never an error in the UI.
+  // Registered-seats counter — polls same-origin /api/count (allowed by CSP
+  // connect-src 'self') every POLL_MS. Polling is what makes the page notice
+  // registration opening (and new signups) without a reload. On static hosting
+  // (e.g. GitHub Pages) the endpoint is absent: the block degrades to a "—"
+  // placeholder, never an error in the UI.
   (function(){
     var seats=document.getElementById('seats'),
         numEl=document.getElementById('seat-count'),
@@ -201,7 +221,10 @@
         fill=document.getElementById('bar-fill'),
         note=document.getElementById('seat-note'),
         waitEl=document.getElementById('seat-waitlist'),
-        waitNum=document.getElementById('wait-count');
+        waitNum=document.getElementById('wait-count'),
+        // Last rendered confirmed count: the roll-up animation replays only
+        // when the number actually changed, not on every poll.
+        shown=null;
 
     function animateTo(target){
       var dur=900,t0=null;
@@ -214,7 +237,8 @@
       requestAnimationFrame(step);
     }
 
-    fetch('/api/count',{headers:{'Accept':'application/json'}})
+    function load(){
+    return fetch('/api/count',{headers:{'Accept':'application/json'}})
       .then(function(r){if(!r.ok)throw 0;return r.json();})
       .then(function(j){
         // Let the countdown react to the authoritative open flag, then re-tick.
@@ -242,11 +266,14 @@
         if(full){
           seats.classList.add('full');
           numEl.textContent='KOMPLET';
+          shown=null;
           fill.style.width='100%';
           note.textContent='Brak miejsc — '+lim+' uczestników + '+wl+' rezerwowych wyczerpane';
         }else{
           seats.classList.remove('full');
-          animateTo(confirmed);
+          // Animate only on a real change; a poll that brings the same number
+          // must not restart the roll-up every minute.
+          if(shown!==confirmed){animateTo(confirmed);shown=confirmed;}
           fill.style.width=pct+'%';
           note.textContent=(confirmed>=lim)
             ? 'Miejsca podstawowe zajęte — trwają zapisy na listę rezerwową'
@@ -254,11 +281,21 @@
         }
       })
       .catch(function(){
-        numEl.textContent='—';
-        ofEl.innerHTML='<b>—</b> / 20 miejsc';
-        fill.style.width='0';
-        waitEl.hidden=true;
+        // No API (static hosting) or a transient failure: show placeholders and
+        // leave apiOpen as it is, so the clock fallback keeps the page usable.
+        // The next poll retries — a blip must not freeze the page forever.
+        if(apiOpen===null){
+          numEl.textContent='—';
+          ofEl.innerHTML='<b>—</b> / 20 miejsc';
+          fill.style.width='0';
+          waitEl.hidden=true;
+        }
       });
+    }
+
+    refreshCount=load;
+    load();
+    setInterval(load,POLL_MS);
   })();
 </script>
 </body>

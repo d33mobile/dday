@@ -141,7 +141,7 @@ Serwer WWW:
 | `TOKEN_SECRET` | *(puste)* | wspólny sekret HMAC dla tokenów; musi być identyczny u bota |
 | `INTERNAL_TOKEN` | *(puste)* | bearer chroniący `/api/registered` i `/api/registrations`; puste = endpointy wyłączone (404) |
 | `ADMIN_TOKEN` | *(puste)* | token chroniący `/admin`; puste = panel admina wyłączony (404) |
-| `REGISTRATION_OPEN` | *(puste)* | `1`/`true`/`yes` wymusza otwarte zapisy; inaczej decyduje bramka czasowa |
+| `REGISTRATION_OPEN` | *(puste)* | **opcjonalny override do testów**: `1`/`true`/`yes` wymusza otwarte zapisy, `0` wymusza zamknięte, brak/puste = automat wg `REGISTRATION_OPEN_AT` |
 | `REGISTRATION_OPEN_AT` | `2026-07-26 15:00` | moment otwarcia zapisów |
 | `EVENT_START_AT` | `2026-08-08 14:00` | początek wydarzenia |
 | `EVENT_END_AT` | `2026-08-08 22:00` | koniec wydarzenia |
@@ -203,7 +203,9 @@ make down   # zatrzymanie stacku
 z: `AGE_KEY_DATA`, `AGE_PUB_DATA` (klucze base64 — plik 0600 byłby nieczytelny dla
 użytkownika `nonroot` w obrazie distroless), `INTERNAL_TOKEN`, `TOKEN_SECRET` i
 `ADMIN_TOKEN` (losowane raz i potem reużywane) oraz `REGISTRATION_OPEN`
-(domyślnie `1`).
+(domyślnie **pusty** — czyli rejestracja otwiera się automatycznie, patrz niżej;
+jawnie ustawiona wartość z istniejącego `.env` jest zachowywana). Po zapisie
+`make up` wypisuje tryb rejestracji: `AUTO`, `FORCED OPEN` albo `FORCED CLOSED`.
 
 `docker-compose.yml` wystawia serwis `dday` przez Traefika na
 `dday.hs-ldz.pl` (entrypoint `websecure`, certresolver `myresolver`) i uruchamia
@@ -211,6 +213,45 @@ serwis `bot`. Dane trwałe: wolumen `dday-data` (`/data/dday.db`) i `bot-data`
 (cache DM-ów bota). Zmienne `REGISTRATION_OPEN_AT` / `EVENT_START_AT` /
 `EVENT_END_AT` są przepuszczane do obu serwisów — ustaw je w `.env`, jeśli
 zmieniasz termin.
+
+## Automatyczne otwarcie zapisów
+
+**Nie trzeba nic robić ręcznie w momencie startu zapisów.** Rejestracja otwiera
+się sama o `REGISTRATION_OPEN_AT` (domyślnie `2026-07-26 15:00` czasu polskiego):
+
+- **Serwer WWW** liczy bramkę `regwindow.Open()` przy **każdym żądaniu**, więc
+  `/register` i `/api/count` przełączają się w tej samej sekundzie — bez
+  restartu i bez redeploya.
+- **Bot Matrix** liczy ją przy **każdej komendzie**, więc od tego momentu zaczyna
+  wydawać linki zamiast odpowiadać „jeszcze nie wystartowały".
+- **Landing** odpytuje `/api/count` co 60 s i dodatkowo natychmiast w chwili, gdy
+  odliczanie do startu przekroczy zero. Otwarta w przeglądarce strona sama
+  pokaże licznik zapisanych, sekcję „Jak się zapisać" i aktywne CTA — **bez F5**.
+  Jeśli API kiedykolwiek odpowiedziało, to ono rozstrzyga (uwzględnia też
+  wymuszone `REGISTRATION_OPEN=0`); bez API (np. GitHub Pages) decyduje zegar
+  przeglądarki i wbudowana data fallbackowa.
+
+`REGISTRATION_OPEN` to **opcjonalny override wyłącznie do testów**: `1` wymusza
+otwarte zapisy, `0` wymusza zamknięte, brak/puste = automat.
+
+### Uwaga dla istniejących wdrożeń
+
+Starsze wersje `make up` wpisywały do `.env` `REGISTRATION_OPEN=1`. Taka linia
+**wymusza otwarte zapisy na stałe i całkowicie ignoruje moment otwarcia**. Na
+hoście produkcyjnym trzeba ją usunąć (albo wyzerować) przed startem zapisów:
+
+```sh
+cd /ścieżka/do/dday
+grep '^REGISTRATION_OPEN=' .env          # sprawdź, co tam jest
+sed -i 's/^REGISTRATION_OPEN=.*/REGISTRATION_OPEN=/' .env   # pusta wartość = automat
+docker compose up -d                     # przeładuj env kontenerów
+curl -s https://dday.hs-ldz.pl/api/count | grep -o '"open":[a-z]*'
+```
+
+Ostatnia komenda przed terminem musi pokazać `"open":false`. Alternatywnie
+`make up` — zachowa jawną wartość, jeśli linia dalej ma `1`, więc i tak trzeba ją
+najpierw wyczyścić. Restart nie jest potrzebny do samego otwarcia — jedynie do
+wczytania zmienionego `.env`.
 
 ## Zmiana terminu wydarzenia
 

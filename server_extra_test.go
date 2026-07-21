@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -123,6 +124,44 @@ func TestRegisterMethodNotAllowed(t *testing.T) {
 		e.handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s /register = %d; want 405", m, rec.Code)
+		}
+	}
+}
+
+// TestApiCountOpenFollowsTimeGate is the automatic-opening contract: with no
+// REGISTRATION_OPEN override in play, /api/count reports open=false while
+// REGISTRATION_OPEN_AT is in the future and open=true once it is in the past —
+// and it does so per request, so a running server flips by itself with no
+// restart. The landing page polls this endpoint and follows its flag.
+func TestApiCountOpenFollowsTimeGate(t *testing.T) {
+	t.Setenv("REGISTRATION_OPEN", "") // no override — the time gate decides
+	sub, err := fs.Sub(embedded, ".")
+	if err != nil {
+		t.Fatalf("embed sub: %v", err)
+	}
+	// isOpen is wired exactly as main() wires it: the live regwindow gate.
+	e := &testEnv{handler: newMux(deps{
+		seatLimit:   20,
+		isOpen:      regwindow.Open,
+		files:       http.FS(sub),
+		tokenSecret: testTokenSecret,
+	})}
+	for _, c := range []struct {
+		openAt string
+		want   bool
+	}{
+		{"2999-01-01 12:00", false},
+		{"2000-01-01 12:00", true},
+	} {
+		t.Setenv(regwindow.EnvOpenAt, c.openAt)
+		var got struct {
+			Open bool `json:"open"`
+		}
+		if err := json.Unmarshal(e.get(t, "/api/count").Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.Open != c.want {
+			t.Errorf("REGISTRATION_OPEN_AT=%s → open=%v; want %v", c.openAt, got.Open, c.want)
 		}
 	}
 }
